@@ -1,7 +1,7 @@
 #ifndef __OMEM_H__
 #define __OMEM_H__
 
-#define NUM_CONNECTION	4				// Maximum number of connection
+#define NUM_CONNECTION	4	// Maximum number of connection
 #define MEM_SIZE		(8ULL * 1024 * 1024 * 1024)	// 8GB
 #define RECV_BUFFER_SIZE	2048
 
@@ -70,64 +70,64 @@
 
 // Channel E
 #if 0
-#define E_GRANTACK				0  // Not required opcode
+#define E_GRANTACK				0	// Not required opcode
 #endif
 
 struct ox11_header {
-	uint64_t dst_mac_addr:48;
-	uint64_t src_mac_addr:48;
-	unsigned short eth_type;
-	uint64_t be64_tloe_header;
-	uint64_t be64_tl_msg;
-	uint64_t be64_tl_data_start;
-}__attribute__((__packed__));
+    uint64_t dst_mac_addr:48;
+    uint64_t src_mac_addr:48;
+    unsigned short eth_type;
+    uint64_t be64_tloe_header;
+    uint64_t be64_tl_msg;
+    uint64_t be64_tl_data_start;
+} __attribute__((__packed__));
 
 struct ox_connection {
-	uint64_t src_mac_addr:48;
-	unsigned int seq_num:22;
-	unsigned int seq_num_expected:22;
-	unsigned char credit:5;
+    uint64_t src_mac_addr:48;
+    unsigned int seq_num:22;
+    unsigned int seq_num_expected:22;
+    unsigned char credit:5;
 };
 
 struct eth_header {
-	uint64_t dst_mac_addr:48;	
-	uint64_t src_mac_addr:48;
-	unsigned short eth_type;
-}__attribute__((__packed__));
+    uint64_t dst_mac_addr:48;
+    uint64_t src_mac_addr:48;
+    unsigned short eth_type;
+} __attribute__((__packed__));
 
 /* TLoE Header in Host Endian (LE) */
 struct tloe_header {
-	unsigned char credit:5;
-	unsigned char chan:3;
-	unsigned char reserve3:1;
-	unsigned char ack:1;
-	unsigned int seq_num_ack:22;
-	unsigned int seq_num:22;
-	unsigned char reserve2:2;
-	unsigned char reserve1:1;
-	unsigned char msg_type:4;
-	unsigned char vc:3;
-} __attribute__((packed,aligned(8)));
+    unsigned char credit:5;
+    unsigned char chan:3;
+    unsigned char reserve3:1;
+    unsigned char ack:1;
+    unsigned int seq_num_ack:22;
+    unsigned int seq_num:22;
+    unsigned char reserve2:2;
+    unsigned char reserve1:1;
+    unsigned char msg_type:4;
+    unsigned char vc:3;
+} __attribute__((packed, aligned(8)));
 
 struct tl_msg_header_chan_AD {
-	unsigned int source:26;
-	unsigned int reserve1:12;
-	unsigned int err:2;
-	unsigned int domain:8;
-	unsigned int size:4;
-	unsigned int param:4;
-	unsigned int reserve2:1;
-	unsigned int opcode:3;
-	unsigned int chan:3;
-	unsigned int reserve3:1;
-}__attribute__((packed,aligned(8)));
+    unsigned int source:26;
+    unsigned int reserve1:12;
+    unsigned int err:2;
+    unsigned int domain:8;
+    unsigned int size:4;
+    unsigned int param:4;
+    unsigned int reserve2:1;
+    unsigned int opcode:3;
+    unsigned int chan:3;
+    unsigned int reserve3:1;
+} __attribute__((packed, aligned(8)));
 
 struct ox_packet_struct {
-	struct eth_header eth_hdr;
-	struct tloe_header tloe_hdr;
-	uint64_t tl_msg_mask;
-	uint32_t flit_cnt;
-	uint64_t *flits;
+    struct eth_header eth_hdr;
+    struct tloe_header tloe_hdr;
+    uint64_t tl_msg_mask;
+    uint32_t flit_cnt;
+    uint64_t *flits;
 };
 
 #if 0
@@ -160,15 +160,19 @@ int handle_normal_packet(int, int, struct ox_packet_struct *);
 int get_ox_msg_type(struct ox_packet_struct *); 
 int get_ox_channel(char *); */
 
-void build_ethernet_header(struct ox_packet_struct *, struct ox_packet_struct *);
-void build_tLoE_frame_header(int, struct ox_packet_struct *, struct ox_packet_struct *); 
+void build_ethernet_header(struct ox_packet_struct *,
+			   struct ox_packet_struct *);
+void build_tLoE_frame_header(int, struct ox_packet_struct *,
+			     struct ox_packet_struct *);
 int ox_struct_to_packet(struct ox_packet_struct *, char *, int *);
 int packet_to_ox_struct(char *, int, struct ox_packet_struct *);
-void make_response_packet_template(int connection_id, struct ox_packet_struct * recv_ox_p, struct ox_packet_struct * send_ox_p);
+void make_response_packet_template(int connection_id,
+				   struct ox_packet_struct *recv_ox_p,
+				   struct ox_packet_struct *send_ox_p);
 int get_connection(struct ox_packet_struct *);
-int delete_connection(int) ;
+int delete_connection(int);
 int create_new_connection(struct ox_packet_struct *);
 int send_ack(int, int, struct ox_packet_struct *);
-int send_close_connection(int, int, struct ox_packet_struct *); 
+int send_close_connection(int, int, struct ox_packet_struct *);
 
-#endif /* __OMEM_H__*/
+#endif				/* __OMEM_H__ */
