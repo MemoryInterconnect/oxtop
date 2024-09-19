@@ -21,6 +21,7 @@ uint64_t base_addr = 0x200000000, size = 8192ULL * 1024 * 1024;
 int *total_access_counter_array = NULL;
 int *access_record_array = NULL;
 uint64_t total_page_num = 0;
+size_t total_read_bytes = 0, total_write_bytes = 0;
 
 void draw_border(int columns, int rows, char *block_size)
 {
@@ -151,9 +152,7 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
     struct tl_msg_header_chan_AD tl_msg_header;
 
     uint64_t be64_temp, mask, addr, page_num;
-    int i, size, updated = 0;
-
-    time_t now;
+    int i, size;
 
     memcpy(buf, packet, packet_len);
 
@@ -163,32 +162,36 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
     mask = ox_p.tl_msg_mask;
     if (mask) {
 	for (i = 0; i < (sizeof(uint64_t) * 8); i++) {
-	    if (mask == 0)
-		break;
-
 	    if ((mask & 1) == 1) {
 		be64_temp = be64toh(ox_p.flits[i]);
 		memcpy(&(tl_msg_header), &be64_temp, sizeof(uint64_t));
 
+		//if this is a channel A message, get address and size
 		if (tl_msg_header.chan == CHANNEL_A) {
 		    addr = be64toh(ox_p.flits[i + 1]);
-		    size = 1 << tl_msg_header.size;
 		    page_num = (addr - base_addr) >> 12;
-		    total_access_counter_array[page_num]++;
+
 		    if (page_num >= total_page_num) {
 			printf("addr = %lx is out of range.\n", addr);
 			continue;
 		    }
 
+		    total_access_counter_array[page_num]++;
+		    size = 1 << tl_msg_header.size;
+
 		    if (tl_msg_header.opcode == A_PUTFULLDATA_OPCODE) {
 			access_record_array[page_num] |= WRITE;
 			access_record_array[page_num] |= TOUCHED;
+			total_write_bytes += size;
 		    } else if (tl_msg_header.opcode == A_GET_OPCODE) {
 			access_record_array[page_num] |= READ;
+			total_read_bytes += size;
 		    }
 		}
 	    }
 	    mask = (mask >> 1);
+	    if (mask == 0)
+		break;
 	}
     }
 }
@@ -215,7 +218,10 @@ void *status_update_thread(void *data)
     init_pair(4, 6, 7);		//White character on Gray background, TOUCHED
 
     while (1) {
+	//display status
 	draw_screen();
+
+	//clear previous access records
 	for (i = 0; i < total_page_num; i++) {
 	    access_record_array[i] &= ~(READ | WRITE);
 	}
