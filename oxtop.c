@@ -11,20 +11,59 @@
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include "ox_common.h"
 
+//access_bit definition
 #define TOUCHED (0x1<<0)
 #define READ (0x1<<1)
 #define WRITE (0x1<<2)
 
+typedef struct {
+	short access_bit;
+	short host_id;
+	short hotness;
+} access_record;
+
+#define MAX_MAC_LIST 4
+uint64_t src_mac[MAX_MAC_LIST] = {0};
+
 uint64_t base_addr = 0x200000000, size = 8192ULL * 1024 * 1024;
-int *total_access_counter_array = NULL;
-int *access_record_array = NULL;
+int *total_read_counter_array = NULL;
+int *total_write_counter_array = NULL;
+//int *access_record_array = NULL;
+access_record * access_record_array = NULL;
 uint64_t total_page_num = 0;
 size_t total_read_bytes = 0, total_write_bytes = 0;
 
+int get_host_id(uint64_t mac)
+{
+	int i;
+
+	for(i = 0; i<MAX_MAC_LIST; i++) {
+	    if (src_mac[i] == mac) {
+//		    printf("%s %d - mac = %lx\n", __FUNCTION__, __LINE__, src_mac[i]);
+		    return i+1;
+	    }
+	}
+
+	if ( i >= MAX_MAC_LIST ) {
+		for(i=0 ; i<MAX_MAC_LIST; i++) {
+			if (src_mac[i] == 0) {
+				src_mac[i] = mac;
+//		    		printf("%s %d - mac = %lx\n", __FUNCTION__, __LINE__, src_mac[i]);
+				return i+1;
+			}
+		}
+	}
+
+	return -1;
+}
+
 void draw_border(int columns, int rows, char *block_size)
 {
+    int i;
+    uint64_t be_mac;
     int x = 0, y = 0;
     int w = columns - 1;
     int h = rows - 1;
@@ -54,30 +93,56 @@ void draw_border(int columns, int rows, char *block_size)
     //Horizontal line
     mvhline(y + 2, x + 1, ACS_HLINE, w - 1);
 
+    //Foot part
+    //Left T
+    mvaddch(y + h - 2, x, ACS_LTEE);
+    //Right T
+    mvaddch(y + h - 2, x + w, ACS_RTEE);
+    //Horizontal line
+    mvhline(y + h - 2, x + 1, ACS_HLINE, w - 1);
+
     //Show Title
     mvprintw(1, 2, "MECA Memory Access Monitor");
     printw("\t\t");
     addch(' ' | A_REVERSE);
     printw(" = %s", block_size);
+
+    //Show MAC of hosts
+    mvprintw(y + h - 1, 2, "Host MACs\t\t");
+    for(i=0; i<4; i++) {
+	    if (src_mac[i] != 0) {
+		    be_mac = __builtin_bswap64(src_mac[i]);
+	            addch(ACS_BULLET | COLOR_PAIR(2));
+		    printw(" = %lx", be_mac>>16);
+	    }
+    }
 }
 
-void draw_status(int *status_array, int count, int row_width)
+//void draw_status(int *status_array, int count, int row_width)
+void draw_status(access_record *status_array, int count, int row_width)
 {
     int row = 4;
     int current = 0;
+    int host_id = 0;
 
     move(row, 2);
     do {
-	if ((status_array[current] & 0x6) == READ) {
-	    addch('R' | COLOR_PAIR(1));
-	} else if ((status_array[current] & 0x6) == WRITE) {
-	    addch('W' | COLOR_PAIR(2));
-	} else if ((status_array[current] & 0x6) == (READ | WRITE)) {
-	    addch('M' | COLOR_PAIR(3));
-	} else if ((status_array[current] & 0x1) == TOUCHED) {
-	    addch(' ' | COLOR_PAIR(4));
+	if ( status_array[current].host_id > 0 ) {
+	    host_id = status_array[current].host_id;
+	    if ((status_array[current].access_bit & 0x6) == READ) {
+	    	addch('R' | COLOR_PAIR(3 + (host_id-1)));
+	    } else if ((status_array[current].access_bit & 0x6) == WRITE) {
+	    	addch('W' | COLOR_PAIR(4 + (host_id-1)));
+	    } else if ((status_array[current].access_bit & 0x6) == (READ | WRITE)) {
+	    	addch('M' | COLOR_PAIR(2 + (host_id-1)));
+	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
+		if ( status_array[current].hotness > 0 ) 
+		    addch(ACS_BULLET | COLOR_PAIR(14));
+		else
+	    	    addch(ACS_BULLET | COLOR_PAIR(2 + (host_id-1)));
+	    }
 	} else {
-	    addch(ACS_BULLET);
+	    addch(ACS_BULLET|COLOR_PAIR(1));
 	}
 
 	current++;
@@ -95,7 +160,8 @@ void draw_screen(void)
     int columns = 0, rows = 0;
     int block_count = 0;
     int block_unit_shift = 0;
-    int *status_array;
+//    int *status_array;
+    access_record *status_array;
     size_t i;
     char block_size_string[16];
 
@@ -127,12 +193,19 @@ void draw_screen(void)
     draw_border(columns, rows, block_size_string);
 
     //Make status array and fill it with access_record_array
-    status_array = malloc(sizeof(int) * block_count);
-    bzero(status_array, sizeof(int) * block_count);
+//    status_array = malloc(sizeof(int) * block_count);
+    status_array = malloc(sizeof(access_record) * block_count);
+//    bzero(status_array, sizeof(int) * block_count);
+    bzero(status_array, sizeof(access_record) * block_count);
 
     for (i = 0; i < total_page_num; i++) {
-	status_array[i >> block_unit_shift] |=
-	    (access_record_array[i] & (READ | WRITE | TOUCHED));
+	if ( access_record_array[i].host_id == 0 ) continue;
+	status_array[i >> block_unit_shift].host_id = access_record_array[i].host_id;
+	status_array[i >> block_unit_shift].access_bit |=
+	    (access_record_array[i].access_bit & (READ | WRITE | TOUCHED));
+	if ( access_record_array[i].hotness > status_array[i >> block_unit_shift].hotness )
+		status_array[i >> block_unit_shift].hotness = access_record_array[i].hotness;
+	if ( access_record_array[i].hotness > 0 ) access_record_array[i].hotness--;
     }
 
     //draw latest access status
@@ -153,6 +226,7 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 
     uint64_t be64_temp, mask, addr, page_num;
     int i, size;
+    int host_id = -1;
 
     memcpy(buf, packet, packet_len);
 
@@ -168,24 +242,40 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 
 		//if this is a channel A message, get address and size
 		if (tl_msg_header.chan == CHANNEL_A) {
+		    
+		    //get host id with source mac addr
+		    host_id = get_host_id(ox_p.eth_hdr.src_mac_addr);
+		    if ( host_id < 0 ) {
+			    printf("macaddr = %lx is not in host_mac_addr list.\n", ox_p.eth_hdr.src_mac_addr);
+			    
+			    mask = (mask >> 1);
+			    if (mask == 0) break;
+
+			    continue;
+		    }
+
 		    addr = be64toh(ox_p.flits[i + 1]);
 		    page_num = (addr - base_addr) >> 12;
 
-		    if (page_num >= total_page_num) {
+		    access_record_array[page_num].host_id = host_id;
+
+		    if (page_num < total_page_num) {
+
+			size = 1 << tl_msg_header.size;
+
+			if (tl_msg_header.opcode == A_PUTFULLDATA_OPCODE) {
+			    total_write_counter_array[page_num]++;
+			    access_record_array[page_num].access_bit |= WRITE;
+			    access_record_array[page_num].access_bit |= TOUCHED;
+			    total_write_bytes += size;
+			} else if (tl_msg_header.opcode == A_GET_OPCODE) {
+			    total_read_counter_array[page_num]++;
+			    access_record_array[page_num].access_bit |= READ;
+			    total_read_bytes += size;
+			}
+			access_record_array[page_num].hotness = 5;
+		    } else {
 			printf("addr = %lx is out of range.\n", addr);
-			continue;
-		    }
-
-		    total_access_counter_array[page_num]++;
-		    size = 1 << tl_msg_header.size;
-
-		    if (tl_msg_header.opcode == A_PUTFULLDATA_OPCODE) {
-			access_record_array[page_num] |= WRITE;
-			access_record_array[page_num] |= TOUCHED;
-			total_write_bytes += size;
-		    } else if (tl_msg_header.opcode == A_GET_OPCODE) {
-			access_record_array[page_num] |= READ;
-			total_read_bytes += size;
 		    }
 		}
 	    }
@@ -202,28 +292,13 @@ void *status_update_thread(void *data)
 
     interval_usec = *((int *) data);
 
-    initscr();
-    start_color();
-
-    init_color(1, 0, 1000, 0);	//GREEN
-    init_color(2, 1000, 0, 0);	//RED
-    init_color(3, 1000, 1000, 0);	//YELLOW
-    init_color(4, 0, 0, 1000);	//BLUE
-    init_color(5, 1000, 1000, 1000);	//WHITE
-    init_color(6, 500, 500, 500);	//GRAY
-    init_color(7, 0, 0, 0);	//BLACK
-    init_pair(1, 1, 4);		//Green character on Blue background, READ
-    init_pair(2, 2, 4);		//Red character on Blue background, WRITE
-    init_pair(3, 3, 4);		//Yellow character on Blue background, MIXED
-    init_pair(4, 6, 7);		//White character on Gray background, TOUCHED
-
     while (1) {
 	//display status
 	draw_screen();
 
 	//clear previous access records
 	for (i = 0; i < total_page_num; i++) {
-	    access_record_array[i] &= ~(READ | WRITE);
+	    access_record_array[i].access_bit &= ~(READ | WRITE);
 	}
 
 	usleep(interval_usec);
@@ -263,13 +338,34 @@ int main(int argc, char **argv)
     printf("size = %lu base_addr = 0x%lx\n", size, base_addr);
 
     total_page_num = size / 4096;
-    total_access_counter_array = malloc(sizeof(int) * total_page_num);
-    bzero(total_access_counter_array, sizeof(int) * total_page_num);
-    access_record_array = malloc(sizeof(int) * total_page_num);
-    bzero(access_record_array, sizeof(int) * total_page_num);
+    total_read_counter_array = malloc(sizeof(int) * total_page_num);
+    total_write_counter_array = malloc(sizeof(int) * total_page_num);
+    bzero(total_read_counter_array, sizeof(int) * total_page_num);
+    bzero(total_write_counter_array, sizeof(int) * total_page_num);
+//    access_record_array = malloc(sizeof(int) * total_page_num);
+    access_record_array = malloc(sizeof(access_record) * total_page_num);
+    bzero(access_record_array, sizeof(access_record) * total_page_num);
 
     setlocale(LC_ALL, "C-UTF-8");
-    draw_screen();
+    initscr();
+    start_color();
+
+    init_pair(1, COLOR_WHITE, COLOR_BLACK);		//Normal state
+    init_pair(2, COLOR_WHITE, COLOR_BLUE);		//Host 0, Mixed and no action
+    init_pair(3, COLOR_YELLOW, COLOR_BLUE);		//Host 0, Read
+    init_pair(4, COLOR_RED, COLOR_BLUE);		//Host 0, Write
+    init_pair(5, COLOR_WHITE, COLOR_MAGENTA);		//Host 1, Mixed and no action
+    init_pair(6, COLOR_YELLOW, COLOR_MAGENTA);		//Host 1, Read
+    init_pair(7, COLOR_RED, COLOR_MAGENTA);		//Host 1, Write
+    init_pair(8, COLOR_WHITE, COLOR_GREEN);		//Host 2, Mixed and no action
+    init_pair(9, COLOR_YELLOW, COLOR_GREEN);		//Host 2, Read
+    init_pair(10, COLOR_RED, COLOR_GREEN);		//Host 2, Write
+    init_pair(11, COLOR_WHITE, COLOR_CYAN);		//Host 3, Mixed and no action
+    init_pair(12, COLOR_YELLOW, COLOR_CYAN);		//Host 3, Read
+    init_pair(13, COLOR_RED, COLOR_CYAN);		//Host 3, Write
+    init_pair(14, COLOR_WHITE, COLOR_RED);		//Hot
+
+
 
     handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
