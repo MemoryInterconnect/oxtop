@@ -120,13 +120,15 @@ void draw_border(int columns, int rows, char *block_size)
 }
 
 //void draw_status(int *status_array, int count, int row_width)
-void draw_status(access_record *status_array, int count, int row_width)
+void draw_status(access_record *status_array, int count, int row_start, int row_end, int block_unit)
 {
     int row = 4;
-    int current = 0;
+    long unsigned int current = 0;
     int host_id = 0;
 
     move(row, 2);
+    printw("%09lx", current*block_unit);
+    move(row, row_start);
     do {
 	if ( status_array[current].host_id > 0 ) {
 	    host_id = status_array[current].host_id;
@@ -147,9 +149,11 @@ void draw_status(access_record *status_array, int count, int row_width)
 	}
 
 	current++;
-	if (current % row_width == 0) {
+	if (current % (row_end-row_start) == 0) {
 	    row++;
 	    move(row, 2);
+    	    printw("%09lx", current*block_unit);
+	    move(row, row_start);
 	}
     } while (current < count);
     move(0, 0);
@@ -165,6 +169,7 @@ void draw_screen(void)
     access_record *status_array;
     size_t i;
     char block_size_string[16];
+    int row_start = 12;
 
     //get screen resolution
     ioctl(0, TIOCGWINSZ, &ts);
@@ -172,7 +177,7 @@ void draw_screen(void)
     rows = ts.ws_row;
 
     //How many block to use for display
-    block_count = (columns - 2) * (rows - 4);
+    block_count = (columns - row_start) * (rows - 4);
 
     while ((total_page_num >> block_unit_shift) > block_count) {
 	block_unit_shift++;
@@ -210,7 +215,7 @@ void draw_screen(void)
     }
 
     //draw latest access status
-    draw_status(status_array, block_count, columns - 4);
+    draw_status(status_array, block_count, row_start, columns - 2, 1<<(block_unit_shift+12));
 
     refresh();
 
@@ -253,7 +258,7 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 		    //get host id with source mac addr
 		    host_id = get_host_id(ox_p.eth_hdr.src_mac_addr);
 		    if ( host_id < 0 ) {
-			    printf("macaddr = %lx is not in host_mac_addr list.\n", ox_p.eth_hdr.src_mac_addr);
+//			    printf("macaddr = %lx is not in host_mac_addr list.\n", ox_p.eth_hdr.src_mac_addr);
 			    break;
 		    }
 
