@@ -112,8 +112,8 @@ void draw_border(int columns, int rows, char *block_size)
     for(i=0; i<4; i++) {
 	    if (src_mac[i] != 0) {
 		    be_mac = __builtin_bswap64(src_mac[i]);
-	            addch(ACS_BULLET | COLOR_PAIR(2));
-		    printw(" = %lx", be_mac>>16);
+	            addch(ACS_BULLET | COLOR_PAIR(4 + i));
+		    printw(" = %lx\t", be_mac>>16);
 	    }
     }
 }
@@ -130,16 +130,16 @@ void draw_status(access_record *status_array, int count, int row_width)
 	if ( status_array[current].host_id > 0 ) {
 	    host_id = status_array[current].host_id;
 	    if ((status_array[current].access_bit & 0x6) == READ) {
-	    	addch('R' | COLOR_PAIR(3 + (host_id-1)));
+	    	addch('R' | COLOR_PAIR(2));
 	    } else if ((status_array[current].access_bit & 0x6) == WRITE) {
-	    	addch('W' | COLOR_PAIR(4 + (host_id-1)));
+	    	addch('W' | COLOR_PAIR(2));
 	    } else if ((status_array[current].access_bit & 0x6) == (READ | WRITE)) {
-	    	addch('M' | COLOR_PAIR(2 + (host_id-1)));
+	    	addch('M' | COLOR_PAIR(2));
 	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
 		if ( status_array[current].hotness > 0 ) 
-		    addch(ACS_BULLET | COLOR_PAIR(14));
+		    addch(ACS_BULLET | COLOR_PAIR(3));
 		else
-	    	    addch(ACS_BULLET | COLOR_PAIR(2 + (host_id-1)));
+	    	    addch(ACS_BULLET | COLOR_PAIR(3 + host_id));
 	    }
 	} else {
 	    addch(ACS_BULLET|COLOR_PAIR(1));
@@ -225,7 +225,7 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
     struct tl_msg_header_chan_AD tl_msg_header;
 
     uint64_t be64_temp, mask, addr, page_num;
-    int i, size;
+    int i, data_size;
     int host_id = -1;
 
     memcpy(buf, packet, packet_len);
@@ -243,36 +243,38 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 		//if this is a channel A message, get address and size
 		if (tl_msg_header.chan == CHANNEL_A) {
 		    
+		    addr = be64toh(ox_p.flits[i + 1]);
+		    if ( (addr < base_addr) || (addr > base_addr+size)  ) {
+//			    printf("received addr 0x%lx is invalid. base_addr = 0x%lx size=0x%lx\n", addr, base_addr, size);
+			    break;
+		    }
+
 		    //get host id with source mac addr
 		    host_id = get_host_id(ox_p.eth_hdr.src_mac_addr);
 		    if ( host_id < 0 ) {
 			    printf("macaddr = %lx is not in host_mac_addr list.\n", ox_p.eth_hdr.src_mac_addr);
-			    
-			    mask = (mask >> 1);
-			    if (mask == 0) break;
-
-			    continue;
+			    break;
 		    }
 
-		    addr = be64toh(ox_p.flits[i + 1]);
 		    page_num = (addr - base_addr) >> 12;
 
 		    access_record_array[page_num].host_id = host_id;
 
 		    if (page_num < total_page_num) {
 
-			size = 1 << tl_msg_header.size;
+			data_size = 1 << tl_msg_header.size;
 
 			if (tl_msg_header.opcode == A_PUTFULLDATA_OPCODE) {
 			    total_write_counter_array[page_num]++;
 			    access_record_array[page_num].access_bit |= WRITE;
 			    access_record_array[page_num].access_bit |= TOUCHED;
-			    total_write_bytes += size;
+			    total_write_bytes += data_size;
 			} else if (tl_msg_header.opcode == A_GET_OPCODE) {
 			    total_read_counter_array[page_num]++;
 			    access_record_array[page_num].access_bit |= READ;
-			    total_read_bytes += size;
+			    total_read_bytes += data_size;
 			}
+			//Hotness 
 			access_record_array[page_num].hotness = 5;
 		    } else {
 			printf("addr = %lx is out of range.\n", addr);
@@ -351,19 +353,12 @@ int main(int argc, char **argv)
     start_color();
 
     init_pair(1, COLOR_WHITE, COLOR_BLACK);		//Normal state
-    init_pair(2, COLOR_WHITE, COLOR_BLUE);		//Host 0, Mixed and no action
-    init_pair(3, COLOR_YELLOW, COLOR_BLUE);		//Host 0, Read
-    init_pair(4, COLOR_RED, COLOR_BLUE);		//Host 0, Write
+    init_pair(2, COLOR_WHITE, COLOR_RED);		//Read/Write
+    init_pair(3, COLOR_WHITE, COLOR_YELLOW);		//Hot
+    init_pair(4, COLOR_WHITE, COLOR_BLUE);		//Host 0, Mixed and no action
     init_pair(5, COLOR_WHITE, COLOR_MAGENTA);		//Host 1, Mixed and no action
-    init_pair(6, COLOR_YELLOW, COLOR_MAGENTA);		//Host 1, Read
-    init_pair(7, COLOR_RED, COLOR_MAGENTA);		//Host 1, Write
-    init_pair(8, COLOR_WHITE, COLOR_GREEN);		//Host 2, Mixed and no action
-    init_pair(9, COLOR_YELLOW, COLOR_GREEN);		//Host 2, Read
-    init_pair(10, COLOR_RED, COLOR_GREEN);		//Host 2, Write
-    init_pair(11, COLOR_WHITE, COLOR_CYAN);		//Host 3, Mixed and no action
-    init_pair(12, COLOR_YELLOW, COLOR_CYAN);		//Host 3, Read
-    init_pair(13, COLOR_RED, COLOR_CYAN);		//Host 3, Write
-    init_pair(14, COLOR_WHITE, COLOR_RED);		//Hot
+    init_pair(6, COLOR_BLACK, COLOR_GREEN);		//Host 2, Mixed and no action
+    init_pair(7, COLOR_WHITE, COLOR_CYAN);		//Host 3, Mixed and no action
 
 
 
