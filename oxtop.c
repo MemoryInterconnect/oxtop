@@ -112,8 +112,9 @@ void draw_border(int columns, int rows, char *block_size)
     for(i=0; i<4; i++) {
 	    if (src_mac[i] != 0) {
 		    be_mac = __builtin_bswap64(src_mac[i]);
+		    be_mac >>= 16;
 	            addch(ACS_BULLET | COLOR_PAIR(4 + i));
-		    printw(" = %lx\t", be_mac>>16);
+		    printw(" = %lx\t", be_mac);
 	    }
     }
 }
@@ -354,13 +355,11 @@ int main(int argc, char **argv)
 
     init_pair(1, COLOR_WHITE, COLOR_BLACK);		//Normal state
     init_pair(2, COLOR_WHITE, COLOR_RED);		//Read/Write
-    init_pair(3, COLOR_WHITE, COLOR_YELLOW);		//Hot
+    init_pair(3, COLOR_BLACK, COLOR_YELLOW);		//Hot
     init_pair(4, COLOR_WHITE, COLOR_BLUE);		//Host 0, Mixed and no action
     init_pair(5, COLOR_WHITE, COLOR_MAGENTA);		//Host 1, Mixed and no action
     init_pair(6, COLOR_BLACK, COLOR_GREEN);		//Host 2, Mixed and no action
-    init_pair(7, COLOR_WHITE, COLOR_CYAN);		//Host 3, Mixed and no action
-
-
+    init_pair(7, COLOR_BLACK, COLOR_CYAN);		//Host 3, Mixed and no action
 
     handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
