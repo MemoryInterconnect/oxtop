@@ -33,7 +33,6 @@ uint64_t src_mac[MAX_MAC_LIST] = {0};
 uint64_t base_addr = 0x200000000, size = 8192ULL * 1024 * 1024;
 int *total_read_counter_array = NULL;
 int *total_write_counter_array = NULL;
-//int *access_record_array = NULL;
 access_record * access_record_array = NULL;
 uint64_t total_page_num = 0;
 size_t total_read_bytes = 0, total_write_bytes = 0;
@@ -44,7 +43,6 @@ int get_host_id(uint64_t mac)
 
 	for(i = 0; i<MAX_MAC_LIST; i++) {
 	    if (src_mac[i] == mac) {
-//		    printf("%s %d - mac = %lx\n", __FUNCTION__, __LINE__, src_mac[i]);
 		    return i+1;
 	    }
 	}
@@ -53,7 +51,6 @@ int get_host_id(uint64_t mac)
 		for(i=0 ; i<MAX_MAC_LIST; i++) {
 			if (src_mac[i] == 0) {
 				src_mac[i] = mac;
-//		    		printf("%s %d - mac = %lx\n", __FUNCTION__, __LINE__, src_mac[i]);
 				return i+1;
 			}
 		}
@@ -108,10 +105,9 @@ void draw_border(int columns, int rows, char *block_size)
     printw("\t\t");
     addch(' ' | A_REVERSE);
     printw(" = %s", block_size);
-    printw("\t\tPress 'c' to clear");
+    printw("\t\tPress 'c' to clear\t\tPress 'q' to exit");
 
     //Show MAC of hosts
-    mvprintw(y + h - 1, 2, "\t\t\t\t\t\t\t\t\t");
     mvprintw(y + h - 1, 2, "Host MACs\t\t");
     for(i=0; i<4; i++) {
 	    if (src_mac[i] != 0) {
@@ -143,12 +139,11 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
 	    	addch('W' | COLOR_PAIR(2));
 	    } else if ((status_array[current].access_bit & 0x6) == (READ | WRITE)) {
 	    	addch('M' | COLOR_PAIR(2));
-	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
-		if ( status_array[current].hotness > 0 ) 
+	    } else if ( status_array[current].hotness > 0 ) {
 		    addch(ACS_BULLET | COLOR_PAIR(3));
-		else
-	    	    addch(ACS_BULLET | COLOR_PAIR(3 + host_id));
-	    }
+	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
+		    addch(ACS_BULLET | COLOR_PAIR(3 + host_id));
+	    } else addch(ACS_BULLET|COLOR_PAIR(1));
 	} else {
 	    addch(ACS_BULLET|COLOR_PAIR(1));
 	}
@@ -172,7 +167,6 @@ void draw_screen(void)
     int columns = 0, rows = 0;
     int block_count = 0;
     int block_unit_shift = 0;
-//    int *status_array;
     access_record *status_array;
     size_t i;
     char block_size_string[16];
@@ -213,25 +207,35 @@ void draw_screen(void)
     draw_border(columns, rows, block_size_string);
 
     //Make status array and fill it with access_record_array
-//    status_array = malloc(sizeof(int) * block_count);
     status_array = malloc(sizeof(access_record) * block_count);
-//    bzero(status_array, sizeof(int) * block_count);
     bzero(status_array, sizeof(access_record) * block_count);
 
     //Distill access_record_array to status_array for screen representation
     for (i = 0; i < total_page_num; i++) {
-	if ( access_record_array[i].host_id == 0 ) continue;
-	status_array[i >> block_unit_shift].host_id = access_record_array[i].host_id;
+	if ( access_record_array[i].host_id == 0 
+			&& access_record_array[i].access_bit == 0 
+			&& access_record_array[i].hotness == 0) 
+		continue;
+
+	if ( access_record_array[i].hotness > status_array[i >> block_unit_shift].hotness ) {
+		status_array[i >> block_unit_shift].hotness = access_record_array[i].hotness;
+	}
+
+	if ( access_record_array[i].hotness > 0 ) {
+		access_record_array[i].hotness--;
+	}
+
+	if ( status_array[i >> block_unit_shift].host_id == 0 && access_record_array[i].host_id != 0)
+		status_array[i >> block_unit_shift].host_id = access_record_array[i].host_id;
+
 	status_array[i >> block_unit_shift].access_bit |=
 	    (access_record_array[i].access_bit & (READ | WRITE | TOUCHED));
-	if ( access_record_array[i].hotness > status_array[i >> block_unit_shift].hotness )
-		status_array[i >> block_unit_shift].hotness = access_record_array[i].hotness;
-	if ( access_record_array[i].hotness > 0 ) access_record_array[i].hotness--;
     }
 
     //draw latest access status
     draw_status(status_array, block_count, row_start, columns - 2, 1<<(block_unit_shift+12));
 
+    //show screen
     refresh();
 
     free(status_array);
@@ -290,13 +294,15 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 			    access_record_array[page_num].access_bit |= WRITE;
 			    access_record_array[page_num].access_bit |= TOUCHED;
 			    total_write_bytes += data_size;
+			    //Hotness 
+			    access_record_array[page_num].hotness = 5;
 			} else if (tl_msg_header.opcode == A_GET_OPCODE) {
 			    total_read_counter_array[page_num]++;
 			    access_record_array[page_num].access_bit |= READ;
 			    total_read_bytes += data_size;
+			    //Hotness 
+			    access_record_array[page_num].hotness = 5;
 			}
-			//Hotness 
-			access_record_array[page_num].hotness = 5;
 		    } else {
 			printf("addr = %lx is out of range.\n", addr);
 		    }
@@ -342,7 +348,13 @@ void *status_update_thread(void *data)
 		if (ch == 'c') {//clear status
 		    bzero(access_record_array, total_page_num*sizeof(access_record));
 		    bzero(src_mac, sizeof(uint64_t)*MAX_MAC_LIST);
+	    	    clear();
+    	            refresh();
 	    	}
+		if (ch == 'q') { //terminate program
+		    endwin();
+		    exit(0);
+		}
 	}
     }
 }
