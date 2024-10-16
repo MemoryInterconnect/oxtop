@@ -12,6 +12,8 @@
 #include <signal.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <fcntl.h>
+#include <termios.h>
 #include "ox_common.h"
 
 //access_bit definition
@@ -106,8 +108,10 @@ void draw_border(int columns, int rows, char *block_size)
     printw("\t\t");
     addch(' ' | A_REVERSE);
     printw(" = %s", block_size);
+    printw("\t\tPress 'c' to clear");
 
     //Show MAC of hosts
+    mvprintw(y + h - 1, 2, "\t\t\t\t\t\t\t\t\t");
     mvprintw(y + h - 1, 2, "Host MACs\t\t");
     for(i=0; i<4; i++) {
 	    if (src_mac[i] != 0) {
@@ -115,7 +119,8 @@ void draw_border(int columns, int rows, char *block_size)
 		    be_mac >>= 16;
 	            addch(ACS_BULLET | COLOR_PAIR(4 + i));
 		    printw(" = %lx\t", be_mac);
-	    }
+	    } 
+	
     }
 }
 
@@ -126,7 +131,7 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
     long unsigned int current = 0;
     int host_id = 0;
 
-    move(row, 2);
+    move(row, 1);
     printw("%09lx", current*block_unit);
     move(row, row_start);
     do {
@@ -151,13 +156,15 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
 	current++;
 	if (current % (row_end-row_start) == 0) {
 	    row++;
-	    move(row, 2);
+	    move(row, 1);
     	    printw("%09lx", current*block_unit);
 	    move(row, row_start);
 	}
     } while (current < count);
     move(0, 0);
 }
+
+int prev_columns = 0, prev_rows = 0;
 
 void draw_screen(void)
 {
@@ -169,12 +176,19 @@ void draw_screen(void)
     access_record *status_array;
     size_t i;
     char block_size_string[16];
-    int row_start = 12;
+    int row_start = 11;
 
     //get screen resolution
     ioctl(0, TIOCGWINSZ, &ts);
     columns = ts.ws_col;
     rows = ts.ws_row;
+    
+    if ( prev_columns != columns || prev_rows != rows ) {
+	    erase();
+    	    refresh();
+	    prev_columns = columns;
+	    prev_rows = rows;
+    }
 
     //How many block to use for display
     block_count = (columns - row_start) * (rows - 4);
@@ -204,6 +218,7 @@ void draw_screen(void)
 //    bzero(status_array, sizeof(int) * block_count);
     bzero(status_array, sizeof(access_record) * block_count);
 
+    //Distill access_record_array to status_array for screen representation
     for (i = 0; i < total_page_num; i++) {
 	if ( access_record_array[i].host_id == 0 ) continue;
 	status_array[i >> block_unit_shift].host_id = access_record_array[i].host_id;
@@ -297,8 +312,18 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 void *status_update_thread(void *data)
 {
     int interval_usec, i;
+    int flags;
+    struct termios t;
+    ssize_t bytes;
+    char ch;
 
     interval_usec = *((int *) data);
+
+    flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    tcgetattr(STDIN_FILENO, &t);
+    t.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
 
     while (1) {
 	//display status
@@ -310,6 +335,15 @@ void *status_update_thread(void *data)
 	}
 
 	usleep(interval_usec);
+
+	//read key input
+	bytes = read(STDIN_FILENO, &ch, 1);
+	if (bytes > 0) {
+		if (ch == 'c') {//clear status
+		    bzero(access_record_array, total_page_num*sizeof(access_record));
+		    bzero(src_mac, sizeof(uint64_t)*MAX_MAC_LIST);
+	    	}
+	}
     }
 }
 
