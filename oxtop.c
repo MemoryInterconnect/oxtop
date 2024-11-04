@@ -343,29 +343,23 @@ void *status_update_thread(void *data)
     bzero(&prev_tv, sizeof(struct timeval));
 
     while (1) {
-	//display status
     	//Calculate R/W Bandwidth
 	gettimeofday(&current_tv, NULL);
 	time_diff = (float)(current_tv.tv_sec - prev_tv.tv_sec) + 0.000001*(current_tv.tv_usec - prev_tv.tv_usec);
+	memcpy(&prev_tv, &current_tv, sizeof(struct timeval));
 	
     	current_read_bytes = total_read_bytes - prev_read_bytes;
 	current_write_bytes = total_write_bytes - prev_write_bytes;
 	prev_read_bytes = total_read_bytes;
 	prev_write_bytes = total_write_bytes;
 
-	usleep(interval_usec);
-
-	if ( prev_tv.tv_sec == 0 ) {
-		memcpy(&prev_tv, &current_tv, sizeof(struct timeval));
-		continue;
-	} else {
-		memcpy(&prev_tv, &current_tv, sizeof(struct timeval));
-	}
-
 	sprintf(bandwidth_string, "bandwidth R %.1fMB/s | W %.1fMB/s", 
 		(float)current_read_bytes/1048576/time_diff, (float)current_write_bytes/1048576/time_diff);
 
+	//display status
 	draw_screen(bandwidth_string);
+
+	usleep(interval_usec);
 
 	//clear previous access records
 	for (i = 0; i < total_page_num; i++) {
