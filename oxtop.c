@@ -59,13 +59,32 @@ int get_host_id(uint64_t mac)
 	return -1;
 }
 
-void draw_border(int columns, int rows, char *block_size)
+void draw_border(int columns, int rows, char *block_size, char * bandwidth_string)
 {
     int i;
     uint64_t be_mac;
     int x = 0, y = 0;
     int w = columns - 1;
     int h = rows - 1;
+
+    //Show Title
+    mvprintw(1, 2, "MECA Memory Access Monitor");
+    printw("\t\t");
+    addch(' ' | A_REVERSE);
+    printw(" = %s", block_size);
+    printw("\t\tPress 'c' to clear\t\tPress 'q' to exit");
+
+    //Show MAC of hosts
+    mvprintw(y + h - 1, 2, "Host MACs\t\t");
+    for(i=0; i<4; i++) {
+	    if (src_mac[i] != 0) {
+		    be_mac = __builtin_bswap64(src_mac[i]);
+		    be_mac >>= 16;
+	            addch(ACS_BULLET | COLOR_PAIR(4 + i));
+		    printw(" = %lx\t", be_mac);
+	    } 
+    }
+    printw("%s          ", bandwidth_string);
 
     //Upper left corner
     mvaddch(y, x, ACS_ULCORNER);
@@ -100,24 +119,6 @@ void draw_border(int columns, int rows, char *block_size)
     //Horizontal line
     mvhline(y + h - 2, x + 1, ACS_HLINE, w - 1);
 
-    //Show Title
-    mvprintw(1, 2, "MECA Memory Access Monitor");
-    printw("\t\t");
-    addch(' ' | A_REVERSE);
-    printw(" = %s", block_size);
-    printw("\t\tPress 'c' to clear\t\tPress 'q' to exit");
-
-    //Show MAC of hosts
-    mvprintw(y + h - 1, 2, "Host MACs\t\t");
-    for(i=0; i<4; i++) {
-	    if (src_mac[i] != 0) {
-		    be_mac = __builtin_bswap64(src_mac[i]);
-		    be_mac >>= 16;
-	            addch(ACS_BULLET | COLOR_PAIR(4 + i));
-		    printw(" = %lx\t", be_mac);
-	    } 
-	
-    }
 }
 
 //void draw_status(int *status_array, int count, int row_width)
@@ -161,7 +162,7 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
 
 int prev_columns = 0, prev_rows = 0;
 
-void draw_screen(void)
+void draw_screen(char * bandwidth_string)
 {
     struct winsize ts;
     int columns = 0, rows = 0;
@@ -171,6 +172,7 @@ void draw_screen(void)
     size_t i;
     char block_size_string[16];
     int row_start = 11;
+    uint64_t touched_page_num = 0;
 
     //get screen resolution
     ioctl(0, TIOCGWINSZ, &ts);
@@ -204,7 +206,7 @@ void draw_screen(void)
 		1 << (2 + block_unit_shift - 20));
 
     //draw border and title
-    draw_border(columns, rows, block_size_string);
+    draw_border(columns, rows, block_size_string, bandwidth_string);
 
     //Make status array and fill it with access_record_array
     status_array = malloc(sizeof(access_record) * block_count);
@@ -227,6 +229,8 @@ void draw_screen(void)
 
 	if ( status_array[i >> block_unit_shift].host_id == 0 && access_record_array[i].host_id != 0)
 		status_array[i >> block_unit_shift].host_id = access_record_array[i].host_id;
+
+	if ( access_record_array[i].access_bit & TOUCHED ) touched_page_num++;
 
 	status_array[i >> block_unit_shift].access_bit |=
 	    (access_record_array[i].access_bit & (READ | WRITE | TOUCHED));
@@ -322,6 +326,12 @@ void *status_update_thread(void *data)
     struct termios t;
     ssize_t bytes;
     char ch;
+    size_t prev_read_bytes = 0, prev_write_bytes = 0;
+    size_t current_read_bytes = 0, current_write_bytes = 0;
+    float elapsed_seconds = 0;
+    char bandwidth_string[256] = {'\0'};
+    struct timeval prev_tv, current_tv;
+    float time_diff;
 
     interval_usec = *((int *) data);
 
@@ -330,17 +340,37 @@ void *status_update_thread(void *data)
     tcgetattr(STDIN_FILENO, &t);
     t.c_lflag &= ~(ICANON | ECHO);
     tcsetattr(STDIN_FILENO, TCSANOW, &t);
+    bzero(&prev_tv, sizeof(struct timeval));
 
     while (1) {
 	//display status
-	draw_screen();
+    	//Calculate R/W Bandwidth
+	gettimeofday(&current_tv, NULL);
+	time_diff = (float)(current_tv.tv_sec - prev_tv.tv_sec) + 0.000001*(current_tv.tv_usec - prev_tv.tv_usec);
+	
+    	current_read_bytes = total_read_bytes - prev_read_bytes;
+	current_write_bytes = total_write_bytes - prev_write_bytes;
+	prev_read_bytes = total_read_bytes;
+	prev_write_bytes = total_write_bytes;
+
+	usleep(interval_usec);
+
+	if ( prev_tv.tv_sec == 0 ) {
+		memcpy(&prev_tv, &current_tv, sizeof(struct timeval));
+		continue;
+	} else {
+		memcpy(&prev_tv, &current_tv, sizeof(struct timeval));
+	}
+
+	sprintf(bandwidth_string, "bandwidth R %.1fMB/s | W %.1fMB/s", 
+		(float)current_read_bytes/1048576/time_diff, (float)current_write_bytes/1048576/time_diff);
+
+	draw_screen(bandwidth_string);
 
 	//clear previous access records
 	for (i = 0; i < total_page_num; i++) {
 	    access_record_array[i].access_bit &= ~(READ | WRITE);
 	}
-
-	usleep(interval_usec);
 
 	//read key input
 	bytes = read(STDIN_FILENO, &ch, 1);
