@@ -27,7 +27,8 @@ typedef struct {
 	short hotness;
 } access_record;
 
-#define MAX_MAC_LIST 4
+#define HOTNESS_TRACE_LENGTH 3
+#define MAX_MAC_LIST 2
 uint64_t src_mac[MAX_MAC_LIST] = {0};
 
 uint64_t base_addr = 0x200000000, size = 8192ULL * 1024 * 1024;
@@ -76,15 +77,16 @@ void draw_border(int columns, int rows, char *block_size, char * bandwidth_strin
 
     //Show MAC of hosts
     mvprintw(y + h - 1, 2, "Host MACs\t\t");
-    for(i=0; i<4; i++) {
+    for(i=0; i<MAX_MAC_LIST; i++) {
 	    if (src_mac[i] != 0) {
 		    be_mac = __builtin_bswap64(src_mac[i]);
 		    be_mac >>= 16;
-	            addch(ACS_BULLET | COLOR_PAIR(4 + i));
+	            addch(ACS_BULLET | COLOR_PAIR(6 + i));
 		    printw(" = %lx\t", be_mac);
 	    } 
     }
-    printw("%s          ", bandwidth_string);
+//disable bandwidth string temporalily
+//    printw("%s          ", bandwidth_string);
 
     //Upper left corner
     mvaddch(y, x, ACS_ULCORNER);
@@ -135,15 +137,17 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
 	if ( status_array[current].host_id > 0 ) {
 	    host_id = status_array[current].host_id;
 	    if ((status_array[current].access_bit & 0x6) == READ) {
-	    	addch('R' | COLOR_PAIR(2));
+	    	addch('R' | COLOR_PAIR(3));
 	    } else if ((status_array[current].access_bit & 0x6) == WRITE) {
 	    	addch('W' | COLOR_PAIR(2));
 	    } else if ((status_array[current].access_bit & 0x6) == (READ | WRITE)) {
-	    	addch('M' | COLOR_PAIR(2));
+	    	addch('M' | COLOR_PAIR(4));
 	    } else if ( status_array[current].hotness > 0 ) {
-		    addch(ACS_BULLET | COLOR_PAIR(3));
+//		    addch(ACS_BULLET | COLOR_PAIR(5));
+		    addch(ACS_BULLET | COLOR_PAIR(7 + host_id));
 	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
-		    addch(ACS_BULLET | COLOR_PAIR(3 + host_id));
+		    addch(ACS_BULLET | COLOR_PAIR(5 + host_id));
+//		    addch(ACS_CKBOARD | COLOR_PAIR(5 + host_id));
 	    } else addch(ACS_BULLET|COLOR_PAIR(1));
 	} else {
 	    addch(ACS_BULLET|COLOR_PAIR(1));
@@ -299,13 +303,13 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 			    access_record_array[page_num].access_bit |= TOUCHED;
 			    total_write_bytes += data_size;
 			    //Hotness 
-			    access_record_array[page_num].hotness = 5;
+			    access_record_array[page_num].hotness = HOTNESS_TRACE_LENGTH;
 			} else if (tl_msg_header.opcode == A_GET_OPCODE) {
 			    total_read_counter_array[page_num]++;
 			    access_record_array[page_num].access_bit |= READ;
 			    total_read_bytes += data_size;
 			    //Hotness 
-			    access_record_array[page_num].hotness = 5;
+			    access_record_array[page_num].hotness = HOTNESS_TRACE_LENGTH;
 			}
 		    } else {
 			printf("addr = %lx is out of range.\n", addr);
@@ -428,13 +432,15 @@ int main(int argc, char **argv)
     initscr();
     start_color();
 
-    init_pair(1, COLOR_WHITE, COLOR_BLACK);		//Normal state
-    init_pair(2, COLOR_WHITE, COLOR_RED);		//Read/Write
-    init_pair(3, COLOR_BLACK, COLOR_YELLOW);		//Hot
-    init_pair(4, COLOR_WHITE, COLOR_BLUE);		//Host 0, Mixed and no action
-    init_pair(5, COLOR_WHITE, COLOR_MAGENTA);		//Host 1, Mixed and no action
-    init_pair(6, COLOR_BLACK, COLOR_GREEN);		//Host 2, Mixed and no action
-    init_pair(7, COLOR_BLACK, COLOR_CYAN);		//Host 3, Mixed and no action
+    init_pair(1, COLOR_WHITE, COLOR_BLACK);		//Initial state
+    init_pair(2, COLOR_BLACK, COLOR_YELLOW);		//Write
+    init_pair(3, COLOR_WHITE, COLOR_BLUE);		//Read
+    init_pair(4, COLOR_BLACK, COLOR_MAGENTA);		//Mixed
+//    init_pair(5, COLOR_BLACK, COLOR_WHITE);		//Hot
+    init_pair(6, COLOR_BLACK, COLOR_GREEN);		//Host 0, no action
+    init_pair(7, COLOR_BLACK, COLOR_RED);		//Host 1, no action
+    init_pair(8, COLOR_WHITE, COLOR_GREEN);		//Host 0, hot trace
+    init_pair(9, COLOR_WHITE, COLOR_RED);		//Host 1, hot trace
 
     handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
