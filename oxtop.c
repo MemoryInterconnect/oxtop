@@ -144,7 +144,8 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
 	    	addch('M' | COLOR_PAIR(4));
 	    } else if ( status_array[current].hotness > 0 ) {
 //		    addch(ACS_BULLET | COLOR_PAIR(5));
-		    addch(ACS_BULLET | COLOR_PAIR(7 + host_id));
+//		    addch(ACS_BULLET | COLOR_PAIR(7 + host_id));
+		    addch(ACS_CKBOARD | COLOR_PAIR(7 + host_id));
 	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
 		    addch(ACS_BULLET | COLOR_PAIR(5 + host_id));
 //		    addch(ACS_CKBOARD | COLOR_PAIR(5 + host_id));
@@ -439,8 +440,8 @@ int main(int argc, char **argv)
 //    init_pair(5, COLOR_BLACK, COLOR_WHITE);		//Hot
     init_pair(6, COLOR_BLACK, COLOR_GREEN);		//Host 0, no action
     init_pair(7, COLOR_BLACK, COLOR_RED);		//Host 1, no action
-    init_pair(8, COLOR_WHITE, COLOR_GREEN);		//Host 0, hot trace
-    init_pair(9, COLOR_WHITE, COLOR_RED);		//Host 1, hot trace
+    init_pair(8, COLOR_BLACK, COLOR_GREEN);		//Host 0, hot trace
+    init_pair(9, COLOR_BLACK, COLOR_RED);		//Host 1, hot trace
 
     handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
