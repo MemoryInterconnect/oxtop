@@ -27,7 +27,7 @@ typedef struct {
 	short hotness;
 } access_record;
 
-#define HOTNESS_TRACE_LENGTH 3
+#define HOTNESS_TRACE_LENGTH 4
 #define MAX_MAC_LIST 2
 uint64_t src_mac[MAX_MAC_LIST] = {0};
 
@@ -37,6 +37,20 @@ int *total_write_counter_array = NULL;
 access_record * access_record_array = NULL;
 uint64_t total_page_num = 0;
 size_t total_read_bytes = 0, total_write_bytes = 0;
+
+void uint64_to_mac_string(uint64_t mac, char * mac_string) {
+    // Extract bytes hi→lo
+    uint8_t b0 = (mac >> 40) & 0xFF;
+    uint8_t b1 = (mac >> 32) & 0xFF;
+    uint8_t b2 = (mac >> 24) & 0xFF;
+    uint8_t b3 = (mac >> 16) & 0xFF;
+    uint8_t b4 = (mac >>  8) & 0xFF;
+    uint8_t b5 = (mac >>  0) & 0xFF;
+
+    // Print as two-digit hex with leading zeros and colon separators
+    sprintf(mac_string, "%02x:%02x:%02x:%02x:%02x:%02x",
+           b0, b1, b2, b3, b4, b5);
+}
 
 int get_host_id(uint64_t mac)
 {
@@ -67,6 +81,7 @@ void draw_border(int columns, int rows, char *block_size, char * bandwidth_strin
     int x = 0, y = 0;
     int w = columns - 1;
     int h = rows - 1;
+    char mac_string[20];
 
     //Show Title
     mvprintw(1, 2, "MECA Memory Access Monitor");
@@ -82,7 +97,8 @@ void draw_border(int columns, int rows, char *block_size, char * bandwidth_strin
 		    be_mac = __builtin_bswap64(src_mac[i]);
 		    be_mac >>= 16;
 	            addch(ACS_BULLET | COLOR_PAIR(6 + i));
-		    printw(" = %lx\t", be_mac);
+		    uint64_to_mac_string(be_mac, mac_string);
+		    printw(" = %s\t", mac_string);
 	    } 
     }
 //disable bandwidth string temporalily
@@ -143,15 +159,18 @@ void draw_status(access_record *status_array, int count, int row_start, int row_
 	    } else if ((status_array[current].access_bit & 0x6) == (READ | WRITE)) {
 	    	addch('M' | COLOR_PAIR(4));
 	    } else if ( status_array[current].hotness > 0 ) {
-//		    addch(ACS_BULLET | COLOR_PAIR(5));
-//		    addch(ACS_BULLET | COLOR_PAIR(7 + host_id));
-		    addch(ACS_CKBOARD | COLOR_PAIR(7 + host_id));
+		    addch(ACS_CKBOARD | COLOR_PAIR(8 + host_id));
 	    } else if ((status_array[current].access_bit & 0x1) == TOUCHED) {
 		    addch(ACS_BULLET | COLOR_PAIR(5 + host_id));
 //		    addch(ACS_CKBOARD | COLOR_PAIR(5 + host_id));
 	    } else addch(ACS_BULLET|COLOR_PAIR(1));
 	} else {
-	    addch(ACS_BULLET|COLOR_PAIR(1));
+/*	    if ((status_array[current].access_bit & 0x6) == READ) {
+	    	addch('R' | COLOR_PAIR(3));
+	    } else if ( status_array[current].hotness > 0 ) {
+		addch(ACS_CKBOARD | COLOR_PAIR(7 + host_id));
+	    } else*/
+	        addch(ACS_BULLET|COLOR_PAIR(1));
 	}
 
 	current++;
@@ -230,6 +249,8 @@ void draw_screen(char * bandwidth_string)
 
 	if ( access_record_array[i].hotness > 0 ) {
 		access_record_array[i].hotness--;
+		if ( access_record_array[i].hotness < HOTNESS_TRACE_LENGTH/2 ) 
+			access_record_array[i].access_bit &= ~(READ | WRITE);
 	}
 
 	if ( status_array[i >> block_unit_shift].host_id == 0 && access_record_array[i].host_id != 0)
@@ -260,7 +281,7 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 
     uint64_t be64_temp, mask, addr, page_num;
     int i, data_size;
-    int host_id = -1;
+    int host_id = -1, before_host_id = -1;
 
     memcpy(buf, packet, packet_len);
 
@@ -292,6 +313,7 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 
 		    page_num = (addr - base_addr) >> 12;
 
+		    before_host_id = access_record_array[page_num].host_id;
 		    access_record_array[page_num].host_id = host_id;
 
 		    if (page_num < total_page_num) {
@@ -306,6 +328,8 @@ void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
 			    //Hotness 
 			    access_record_array[page_num].hotness = HOTNESS_TRACE_LENGTH;
 			} else if (tl_msg_header.opcode == A_GET_OPCODE) {
+			    if ( before_host_id > 0 && (access_record_array[page_num].access_bit | TOUCHED) ) 
+				access_record_array[page_num].host_id = before_host_id;
 			    total_read_counter_array[page_num]++;
 			    access_record_array[page_num].access_bit |= READ;
 			    total_read_bytes += data_size;
@@ -367,9 +391,9 @@ void *status_update_thread(void *data)
 	usleep(interval_usec);
 
 	//clear previous access records
-	for (i = 0; i < total_page_num; i++) {
-	    access_record_array[i].access_bit &= ~(READ | WRITE);
-	}
+//	for (i = 0; i < total_page_num; i++) {
+//	    access_record_array[i].access_bit &= ~(READ | WRITE);
+//	}
 
 	//read key input
 	bytes = read(STDIN_FILENO, &ch, 1);
@@ -434,14 +458,17 @@ int main(int argc, char **argv)
     start_color();
 
     init_pair(1, COLOR_WHITE, COLOR_BLACK);		//Initial state
-    init_pair(2, COLOR_BLACK, COLOR_YELLOW);		//Write
+//    init_pair(2, COLOR_BLACK, COLOR_YELLOW);		//Write
+    init_pair(2, COLOR_WHITE, COLOR_RED);		//Write
+//    init_pair(3, COLOR_WHITE, COLOR_BLUE);		//Read
     init_pair(3, COLOR_WHITE, COLOR_BLUE);		//Read
-    init_pair(4, COLOR_BLACK, COLOR_MAGENTA);		//Mixed
-//    init_pair(5, COLOR_BLACK, COLOR_WHITE);		//Hot
+    init_pair(4, COLOR_BLACK, COLOR_WHITE);		//Mixed
+    init_pair(5, COLOR_BLACK, COLOR_WHITE);		//
     init_pair(6, COLOR_BLACK, COLOR_GREEN);		//Host 0, no action
-    init_pair(7, COLOR_BLACK, COLOR_RED);		//Host 1, no action
-    init_pair(8, COLOR_BLACK, COLOR_GREEN);		//Host 0, hot trace
-    init_pair(9, COLOR_BLACK, COLOR_RED);		//Host 1, hot trace
+    init_pair(7, COLOR_BLACK, COLOR_MAGENTA);		//Host 1, no action
+    init_pair(8, COLOR_BLACK, COLOR_MAGENTA);		//Host -1(no write before), hot trace
+    init_pair(9, COLOR_BLACK, COLOR_GREEN);		//Host 0, hot trace
+    init_pair(10, COLOR_BLACK, COLOR_MAGENTA);		//Host 1, hot trace
 
     handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
