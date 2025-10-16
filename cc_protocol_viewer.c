@@ -354,8 +354,9 @@ void draw_border(int columns, int rows)
     int w = columns - 1;
     int h = rows - 1;
     char mac_string[20];
+    char entity_string[20];
     int entity_num = 0;
-    int entity_border_num;
+//    int entity_border_num;
     int entity_border[MAX_MAC_LIST*2];
     char msg[40];
 
@@ -378,11 +379,11 @@ void draw_border(int columns, int rows)
     	    refresh();
 	    prev_entity_num = entity_num;
     }
-    entity_border_num = entity_num * 2;
+//    entity_border_num = entity_num * 2;
 
     //printw("entity_num=%d ", entity_num);
-    for (i=0; i<entity_border_num; i++) {
-    	entity_border[i] = w/entity_border_num + i * (w/entity_border_num);
+    for (i=0; i<entity_num+1; i++) {
+    	entity_border[i] = i * (w/entity_num);
 //	printw("entity_border[%d]=%d ", i, entity_border[i]);
     }
 
@@ -420,14 +421,13 @@ void draw_border(int columns, int rows)
     mvhline(y + h - 2, x + 1, ACS_HLINE, w - 1);
 
     //border between hosts and MECA memory
-    for (i=0; i<entity_border_num; i+=2) {
+    for (i=1; i<entity_num; i++) {
     	mvaddch(y + h - 2, entity_border[i], ACS_BTEE);
-    	mvaddch(y + 2, entity_border[i], ACS_TTEE);
+    	mvaddch(y + 2, entity_border[i], ACS_PLUS);
     	mvvline(y + 3, entity_border[i], ACS_VLINE, h - 5);
     }
 
-    for (i=1; i<entity_border_num-2; i+=2) {
-    	mvaddch(y + 2, entity_border[i], ACS_BTEE);
+    for (i=1; i<entity_num; i++) {
     	mvaddch(y, entity_border[i], ACS_TTEE);
     	mvvline(y + 1, entity_border[i], ACS_VLINE, 1);
     }
@@ -438,13 +438,15 @@ void draw_border(int columns, int rows)
 	    if ( get_host_mac(i) != 0 ) {
 		    uint64_to_mac_string(get_host_mac(i), mac_string);
 		    if ( i == 2 ) { //MECA MEMORY
+			    sprintf(entity_string, "MECA MEM");
 			    attron(COLOR_PAIR(7));
-			    mvprintw(y + 1, entity_border[j*2] - 13, "MECA MEM");
+			    mvprintw(y + 1, (entity_border[j] + entity_border[j+1])/2 - strlen(entity_string)/2 - 8, "%s", entity_string);
 			    attroff(COLOR_PAIR(7));
 			    printw("(%s)", mac_string);
 		    } else { //Host
+			    sprintf(entity_string, "Host %d", k++);
 			    attron(COLOR_PAIR(8));
-			    mvprintw(y + 1, entity_border[j*2] - 13, "Host %d", k++);
+			    mvprintw(y + 1, (entity_border[j] + entity_border[j+1])/2 - strlen(entity_string)/2 - 8, "%s", entity_string);
 			    attroff(COLOR_PAIR(8));
 			    printw("(%s)", mac_string);
 		    }
@@ -461,26 +463,26 @@ void draw_border(int columns, int rows)
 	    tl_log_id = (tl_log_current-i)%TL_LOG_MAX;
 	    ret = get_tl_log_string(tl_log_id, msg);
 	    if (ret == 0 ) {
-		int entity_border_id = ((tl_log[tl_log_id].src_id>tl_log[tl_log_id].dst_id)?tl_log[tl_log_id].dst_id:tl_log[tl_log_id].src_id)*2-1;
+		int entity_border_id = tl_log[tl_log_id].src_id;
 		//clear other part
 		for (j=0;j<entity_num-1; j++) {
-		       move(4+(msg_num)*2, entity_border[j*2] + 1);
-		       for (k=0; k<(w/entity_border_num*2-2); k++) addch(' ');
+		       move(4+(msg_num)*2, entity_border[j] + 1);
+		       for (k=0; k<(w/entity_num-2); k++) addch(' ');
 		}
 
 		mvprintw(4+(msg_num)*2, 1, "%04d", tl_log_id);
-		if ( tl_log[tl_log_id].src_id > tl_log[tl_log_id].dst_id )
-			mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - strlen(msg)/2, "<-- ");
-		else
-			mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - strlen(msg)/2, " ");
-		attron(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-		printw("%s", msg);
-		attroff(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-		if ( tl_log[tl_log_id].src_id < tl_log[tl_log_id].dst_id )
+		if ( tl_log[tl_log_id].src_id > tl_log[tl_log_id].dst_id ) {
+			mvprintw(4+(msg_num)*2, entity_border[entity_border_id-1] - 1, "<-- ");
+			attron(COLOR_PAIR(tl_log[tl_log_id].channel+1));
+			printw("%s", msg);
+			attroff(COLOR_PAIR(tl_log[tl_log_id].channel+1));
+		} else {
+			attron(COLOR_PAIR(tl_log[tl_log_id].channel+1));
+			mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - 2 - strlen(msg), "%s", msg);
+			attroff(COLOR_PAIR(tl_log[tl_log_id].channel+1));
 			printw(" -->");
-		else
-			printw(" ");
-			
+
+		}
 
 		msg_num++;
 	    }
