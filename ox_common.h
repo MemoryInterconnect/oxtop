@@ -26,52 +26,42 @@
 // Channel A
 #define A_PUTFULLDATA_OPCODE	0
 #define A_PUTPARTIALDATA_OPCODE	1
-#define A_GET_OPCODE			4
-#if 0
 #define A_ARITHMETICDATA_OPCODE	2
 #define A_LOGICALDATA_OPCODE	3
-#define A_INTENT_OPCODE			5
+#define A_GET_OPCODE		4
+#define A_INTENT_OPCODE		5
 #define A_ACQUIREBLOCK_OPCODE	6
 #define A_ACQUIREPERM_OPCODE	7
-#endif
 
 // Channel B
-#if 0
 #define B_PUTFULLDATA_OPCODE	0
 #define B_PUTPARTIALDATA_OPCODE	1
 #define B_ARITHMETICDATA_OPCODE	2
 #define B_LOGICALDATA_OPCODE	3
-#define B_GET_OPCODE			4
-#define B_INTENT_OPCODE			5
-#define B_PROBEBLOCK_OPCODE		6
-#define B_PROBEPERM_OPCODE		7
-#endif
+#define B_GET_OPCODE		4
+#define B_INTENT_OPCODE		5
+#define B_PROBEBLOCK_OPCODE	6
+#define B_PROBEPERM_OPCODE	7
 
 // Channel C
-#if 0
-#define C_ACCESSACK_OPCODE		0
+#define C_ACCESSACK_OPCODE	0
 #define C_ACCESSACKDATA_OPCODE	1
-#define C_HINTACK_OPCODE		2
-#define C_PROBEACK_OPCODE		4
+#define C_HINTACK_OPCODE	2
+#define C_PROBEACK_OPCODE	4
 #define C_PROBEACKDATA_OPCODE	5
-#define C_RELEASE_OPCODE		6
+#define C_RELEASE_OPCODE	6
 #define C_RELEASEDATA_OPCODE	7
-#endif
 
 // Channel D
-#define D_ACCESSACK_OPCODE		0
+#define D_ACCESSACK_OPCODE	0
 #define D_ACCESSACKDATA_OPCODE	1
-#if 0
-#define D_HINTACK_OPCODE		2
-#define D_GRANT_OPCODE			4
-#define D_GRANTDATA_OPCODE		5
-#define D_RELEASEACK_OPCODE		6
-#endif
+#define D_HINTACK_OPCODE	2
+#define D_GRANT_OPCODE		4
+#define D_GRANTDATA_OPCODE	5
+#define D_RELEASEACK_OPCODE	6
 
 // Channel E
-#if 0
-#define E_GRANTACK				0	// Not required opcode
-#endif
+#define E_GRANTACK		0	// Not required opcode
 
 struct ox11_header {
     uint64_t dst_mac_addr:48;
