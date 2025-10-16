@@ -450,7 +450,7 @@ static void draw_frame_border(int columns, int rows)
 static void draw_footer(int columns, int rows)
 {
     int y = rows - 2;
-    mvprintw(y, 2, "MECA Memory Cache Coherent Protocol Log\tChannel: ");
+    mvprintw(y, 2, "MECA Memory Protocol Viewer\tChannel: ");
 
     for (int i = 1; i <= NUM_TL_CHANNELS; i++) {
 	attron(COLOR_PAIR(COLOR_CHAN_A + i - 1));
