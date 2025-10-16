@@ -70,6 +70,8 @@ struct tl_log_entry {
 int tl_log_current = 0;
 struct tl_log_entry tl_log[TL_LOG_MAX];
 
+uint64_t get_host_mac(int id);
+
 void tl_log_add(int src_id, int dst_id, int channel, char* msg)
 {
 //	printf("%d -> %d chan %d %s\n", src_id, dst_id, channel, msg);
@@ -90,15 +92,16 @@ int get_tl_log_string(int tl_log_id, char * buf)
 		return -1;
 	}
 	if (tl_log[tl_log_id].src_id <= 0 || tl_log[tl_log_id].src_id > MAX_MAC_LIST 
-	    && tl_log[tl_log_id].dst_id <= 0 || tl_log[tl_log_id].dst_id  > MAX_MAC_LIST ) {
+	    || tl_log[tl_log_id].dst_id <= 0 || tl_log[tl_log_id].dst_id  > MAX_MAC_LIST 
+	    || get_host_mac(tl_log[tl_log_id].src_id) == 0 || get_host_mac(tl_log[tl_log_id].dst_id) == 0) {
 		sprintf(buf, "Empty src %d dst %d", tl_log[tl_log_id].src_id, tl_log[tl_log_id].dst_id);
 		return -1;
 	}
 
 	if ( tl_log[tl_log_id].src_id < tl_log[tl_log_id].dst_id ) {
-		sprintf(buf, "%s -->", tl_log[tl_log_id].msg);
+		sprintf(buf, "%s", tl_log[tl_log_id].msg);
 	} else if ( tl_log[tl_log_id].src_id > tl_log[tl_log_id].dst_id ){
-		sprintf(buf, "<-- %s", tl_log[tl_log_id].msg);
+		sprintf(buf, "%s", tl_log[tl_log_id].msg);
 	} else { //invalid log
 		sprintf(buf, "Empty src %d dst %d", tl_log[tl_log_id].src_id, tl_log[tl_log_id].dst_id);
 		return -1;
@@ -450,7 +453,7 @@ void draw_border(int columns, int rows)
     }
 
     //draw TL msg log
-    max_msg = (h/2) - 4;
+    max_msg = (h/2) - 3;
     if ( max_msg < 0 ) max_msg = 0;
     i = max_msg;
     msg_num = 0;
@@ -461,11 +464,21 @@ void draw_border(int columns, int rows)
 		int entity_border_id = ((tl_log[tl_log_id].src_id>tl_log[tl_log_id].dst_id)?tl_log[tl_log_id].dst_id:tl_log[tl_log_id].src_id)*2-1;
 		//clear other part
 		for (j=1;j<entity_num; j++) 
-			mvprintw(4+(msg_num)*2, entity_border[j*2-1] + 1 - w/entity_border_num, "                                     ");
+			mvprintw(4+(msg_num)*2, entity_border[j*2-1] + 1 - w/entity_border_num, "                                       ");
 		mvprintw(4+(msg_num)*2, 1, "%04d", tl_log_id);
+		if ( tl_log[tl_log_id].src_id > tl_log[tl_log_id].dst_id )
+			mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - strlen(msg)/2, "<-- ");
+		else
+			mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - strlen(msg)/2, " ");
 		attron(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-		mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - strlen(msg)/2, "%s", msg);
+		printw("%s", msg);
 		attroff(COLOR_PAIR(tl_log[tl_log_id].channel+1));
+		if ( tl_log[tl_log_id].src_id < tl_log[tl_log_id].dst_id )
+			printw(" -->");
+		else
+			printw(" ");
+			
+
 		msg_num++;
 	    }
 	    i--;
