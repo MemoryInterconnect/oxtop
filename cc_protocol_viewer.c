@@ -465,9 +465,9 @@ void draw_border(int columns, int rows)
 	    if (ret == 0 ) {
 		int entity_border_id = tl_log[tl_log_id].src_id;
 		//clear other part
-		for (j=0;j<entity_num-1; j++) {
+		for (j=0;j<entity_num; j++) {
 		       move(4+(msg_num)*2, entity_border[j] + 1);
-		       for (k=0; k<(w/entity_num-2); k++) addch(' ');
+		       for (k=0; k<(w/entity_num-1); k++) addch(' ');
 		}
 
 		mvprintw(4+(msg_num)*2, 1, "%04d", tl_log_id);
