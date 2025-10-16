@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <netinet/if_ether.h>	// For Ethernet header
+#include <netinet/if_ether.h>
 #include <time.h>
 #include <pthread.h>
 #include <signal.h>
@@ -18,136 +18,130 @@
 #include <sys/socket.h>
 #include "ox_common.h"
 
-// Channel A
-char * chan_opcode_str[][8] = { "","","","","","","","", //chan 0 - none is valid
-	"PUTFULLDATA",  //chan 1 == A
-	"PUTPARTIALDATA", 
-	"ARITHMETICDATA", 
-	"LOGICALDATA", 
-	"GET", 
-	"INTENT", 
-	"ACQUIREBLOCK", 
-	"ACQUIREPERM", 
-     	"PUTFULLDATA", //chan 2 == B
-	"PUTPARTIALDATA",
-	"ARITHMETICDATA",
-	"LOGICALDATA",
-	"GET",
-	"INTENT",
-	"PROBEBLOCK",
-	"PROBEPERM",
-	"ACCESSACK", //chan 3 == C
-	"ACCESSACKDATA",
-	"HINTACK",
-	"NOOP",
-	"PROBEACK",
-	"PROBEACKDATA",
-	"RELEASE",
-	"RELEASEDATA",
-	"ACCESSACK", //chan 4 == D
-	"ACCESSACKDATA",
-	"HINTACK",
-	"NOOP",
-	"GRANT",
-	"GRANTDATA",
-	"RELEASEACK",
-	"NOOP",
-	"GRANTACK", //chan 5 == E
-	};
-
+// Constants
 #define MAX_MAC_LIST 4
-uint64_t src_mac[MAX_MAC_LIST] = { 0 };
-
 #define TL_LOG_MAX 1024
 #define MSG_LEN 256
-struct tl_log_entry {
-	int src_id;
-	int dst_id;
-	int channel;
-	char msg[MSG_LEN];
+#define MAC_STRING_LEN 20
+#define ENTITY_STRING_LEN 20
+#define UPDATE_INTERVAL_USEC 100000  // 0.1 sec
+#define MEM_NODE_ID 2  // Host ID for MECA memory node
+#define NUM_TL_CHANNELS 5  // TileLink channels A-E
+
+// Color pair indices
+#define COLOR_INITIAL 1
+#define COLOR_CHAN_A 2
+#define COLOR_CHAN_B 3
+#define COLOR_CHAN_C 4
+#define COLOR_CHAN_D 5
+#define COLOR_CHAN_E 6
+#define COLOR_MEM 7
+#define COLOR_HOST 8
+
+// TileLink channel opcode strings
+// Index by [channel][opcode], where channel 0 is unused
+static const char *chan_opcode_str[][8] = {
+    {"", "", "", "", "", "", "", ""},  // Channel 0 - none is valid
+    // Channel A
+    {"PUTFULLDATA", "PUTPARTIALDATA", "ARITHMETICDATA", "LOGICALDATA",
+     "GET", "INTENT", "ACQUIREBLOCK", "ACQUIREPERM"},
+    // Channel B
+    {"PUTFULLDATA", "PUTPARTIALDATA", "ARITHMETICDATA", "LOGICALDATA",
+     "GET", "INTENT", "PROBEBLOCK", "PROBEPERM"},
+    // Channel C
+    {"ACCESSACK", "ACCESSACKDATA", "HINTACK", "NOOP",
+     "PROBEACK", "PROBEACKDATA", "RELEASE", "RELEASEDATA"},
+    // Channel D
+    {"ACCESSACK", "ACCESSACKDATA", "HINTACK", "NOOP",
+     "GRANT", "GRANTDATA", "RELEASEACK", "NOOP"},
+    // Channel E
+    {"GRANTACK", "", "", "", "", "", "", ""}
 };
 
-int tl_log_current = 0;
-struct tl_log_entry tl_log[TL_LOG_MAX];
+// Data structures
+struct tl_log_entry {
+    int src_id;
+    int dst_id;
+    int channel;
+    char msg[MSG_LEN];
+};
 
-uint64_t get_host_mac(int id);
+// Global state
+static uint64_t src_mac[MAX_MAC_LIST] = {0};
+static struct tl_log_entry tl_log[TL_LOG_MAX];
+static int tl_log_current = 0;
+static int prev_columns = 0;
+static int prev_rows = 0;
+static int prev_entity_num = 0;
 
-void tl_log_add(int src_id, int dst_id, int channel, char* msg)
+// Forward declarations
+static uint64_t get_host_mac(int id);
+
+// ============================================================================
+// Host Management Functions
+// ============================================================================
+
+/**
+ * Get host ID from MAC address
+ * Returns: Host ID (1-based) or -1 if not found
+ */
+static int get_host_id(uint64_t mac)
 {
-//	printf("%d -> %d chan %d %s\n", src_id, dst_id, channel, msg);
-	tl_log[tl_log_current].src_id = src_id;
-	tl_log[tl_log_current].dst_id = dst_id;
-	tl_log[tl_log_current].channel = channel;
-	memset(tl_log[tl_log_current].msg, 0, MSG_LEN);
-	strncpy(tl_log[tl_log_current].msg, msg, MSG_LEN);
-
-	tl_log_current ++;
-	tl_log_current %= TL_LOG_MAX;
+    for (int i = 0; i < MAX_MAC_LIST; i++) {
+        if (src_mac[i] == mac) {
+            return i + 1;
+        }
+    }
+    return -1;
 }
 
-int get_tl_log_string(int tl_log_id, char * buf)
+/**
+ * Get MAC address from host ID
+ * Returns: MAC address or 0 if invalid ID
+ */
+static uint64_t get_host_mac(int id)
 {
-	if (tl_log_id >= TL_LOG_MAX) {
-		sprintf(buf, "tl_log_id %d > TL_LOG_MAX %d", tl_log_id, TL_LOG_MAX);
-		return -1;
-	}
-	if (tl_log[tl_log_id].src_id <= 0 || tl_log[tl_log_id].src_id > MAX_MAC_LIST 
-	    || tl_log[tl_log_id].dst_id <= 0 || tl_log[tl_log_id].dst_id  > MAX_MAC_LIST 
-	    || get_host_mac(tl_log[tl_log_id].src_id) == 0 || get_host_mac(tl_log[tl_log_id].dst_id) == 0) {
-		sprintf(buf, "Empty src %d dst %d", tl_log[tl_log_id].src_id, tl_log[tl_log_id].dst_id);
-		return -1;
-	}
-
-	if ( tl_log[tl_log_id].src_id < tl_log[tl_log_id].dst_id ) {
-		sprintf(buf, "%s", tl_log[tl_log_id].msg);
-	} else if ( tl_log[tl_log_id].src_id > tl_log[tl_log_id].dst_id ){
-		sprintf(buf, "%s", tl_log[tl_log_id].msg);
-	} else { //invalid log
-		sprintf(buf, "Empty src %d dst %d", tl_log[tl_log_id].src_id, tl_log[tl_log_id].dst_id);
-		return -1;
-	}
-
-	return 0;
-}
-
-// Get MAC address of a network interface
-int get_interface_mac(const char *ifname, uint64_t *mac_addr)
-{
-    struct ifreq ifr;
-    int sock;
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-	perror("socket");
-	return -1;
+    if (id > 0 && id <= MAX_MAC_LIST) {
+        return src_mac[id - 1];
     }
-
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
-    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
-
-    if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
-	perror("ioctl SIOCGIFHWADDR");
-	close(sock);
-	return -1;
-    }
-
-    close(sock);
-
-    // Convert MAC address bytes to uint64_t (store in upper 48 bits)
-    uint8_t *mac = (uint8_t *)ifr.ifr_hwaddr.sa_data;
-    *mac_addr = ((uint64_t)mac[0] << 40) |
-		((uint64_t)mac[1] << 32) |
-		((uint64_t)mac[2] << 24) |
-		((uint64_t)mac[3] << 16) |
-		((uint64_t)mac[4] << 8) |
-		((uint64_t)mac[5] << 0);
-
     return 0;
 }
 
-void uint64_to_mac_string(uint64_t mac, char *mac_string)
+/**
+ * Add a new host to the tracking list
+ */
+static void add_host_id(uint64_t mac)
 {
-    // Extract bytes hi→lo
+    for (int i = 0; i < MAX_MAC_LIST; i++) {
+        if (src_mac[i] == 0) {
+            src_mac[i] = mac;
+            return;
+        }
+    }
+}
+
+/**
+ * Remove a host from the tracking list
+ */
+static void remove_host_id(uint64_t mac)
+{
+    for (int i = 0; i < MAX_MAC_LIST; i++) {
+        if (src_mac[i] == mac) {
+            src_mac[i] = 0;
+            return;
+        }
+    }
+}
+
+// ============================================================================
+// MAC Address Conversion Functions
+// ============================================================================
+
+/**
+ * Convert uint64_t MAC to string format (xx:xx:xx:xx:xx:xx)
+ */
+static void uint64_to_mac_string(uint64_t mac, char *mac_string)
+{
     uint8_t b5 = (mac >> 40) & 0xFF;
     uint8_t b4 = (mac >> 32) & 0xFF;
     uint8_t b3 = (mac >> 24) & 0xFF;
@@ -155,493 +149,589 @@ void uint64_to_mac_string(uint64_t mac, char *mac_string)
     uint8_t b1 = (mac >> 8) & 0xFF;
     uint8_t b0 = (mac >> 0) & 0xFF;
 
-    // Print as two-digit hex with leading zeros and colon separators
-    sprintf(mac_string, "%02x:%02x:%02x:%02x:%02x:%02x",
-	    b0, b1, b2, b3, b4, b5);
+    snprintf(mac_string, MAC_STRING_LEN, "%02x:%02x:%02x:%02x:%02x:%02x",
+             b0, b1, b2, b3, b4, b5);
 }
 
-// Parse MAC address string to uint64_t
-int mac_string_to_uint64(const char *mac_string, uint64_t *mac)
+/**
+ * Parse MAC address string (xx:xx:xx:xx:xx:xx) to uint64_t
+ * Returns: 0 on success, -1 on error
+ */
+static int mac_string_to_uint64(const char *mac_string, uint64_t *mac)
 {
     unsigned int b0, b1, b2, b3, b4, b5;
 
     if (sscanf(mac_string, "%02x:%02x:%02x:%02x:%02x:%02x",
-	       &b0, &b1, &b2, &b3, &b4, &b5) != 6) {
-	fprintf(stderr, "Invalid MAC address format. Expected: xx:xx:xx:xx:xx:xx\n");
-	return -1;
+               &b0, &b1, &b2, &b3, &b4, &b5) != 6) {
+        fprintf(stderr, "Invalid MAC address format. Expected: xx:xx:xx:xx:xx:xx\n");
+        return -1;
     }
 
-/*    *mac = ((uint64_t)b0 << 40) |
-	   ((uint64_t)b1 << 32) |
-	   ((uint64_t)b2 << 24) |
-	   ((uint64_t)b3 << 16) |
-	   ((uint64_t)b4 << 8) |
-	   ((uint64_t)b5 << 0);*/
     *mac = ((uint64_t)b5 << 40) |
-	   ((uint64_t)b4 << 32) |
-	   ((uint64_t)b3 << 24) |
-	   ((uint64_t)b2 << 16) |
-	   ((uint64_t)b1 << 8) |
-	   ((uint64_t)b0 << 0);
-
+           ((uint64_t)b4 << 32) |
+           ((uint64_t)b3 << 24) |
+           ((uint64_t)b2 << 16) |
+           ((uint64_t)b1 << 8) |
+           ((uint64_t)b0 << 0);
 
     return 0;
 }
 
-void remove_host_id(uint64_t mac)
+/**
+ * Get MAC address of a network interface
+ * Returns: 0 on success, -1 on error
+ */
+static int get_interface_mac(const char *ifname, uint64_t *mac_addr)
 {
-    int i;
+    struct ifreq ifr;
+    int sock;
 
-    for (i = 0; i < MAX_MAC_LIST; i++) {
-	if (src_mac[i] == mac) {
-	    src_mac[i] = 0;
-	    break;
-	}
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return -1;
     }
 
-}
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-void add_host_id(uint64_t mac)
-{
-    int i;
-
-    for (i = 0; i < MAX_MAC_LIST; i++) {
-	if (src_mac[i] == 0) {
-	    src_mac[i] = mac;
-	    break;
-	}
+    if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
+        perror("ioctl SIOCGIFHWADDR");
+        close(sock);
+        return -1;
     }
 
+    close(sock);
+
+    uint8_t *mac = (uint8_t *)ifr.ifr_hwaddr.sa_data;
+    *mac_addr = ((uint64_t)mac[0] << 40) |
+                ((uint64_t)mac[1] << 32) |
+                ((uint64_t)mac[2] << 24) |
+                ((uint64_t)mac[3] << 16) |
+                ((uint64_t)mac[4] << 8) |
+                ((uint64_t)mac[5] << 0);
+
+    return 0;
 }
 
+// ============================================================================
+// TileLink Log Functions
+// ============================================================================
 
-
-int get_host_id(uint64_t mac)
+/**
+ * Add an entry to the TileLink log (circular buffer)
+ */
+static void tl_log_add(int src_id, int dst_id, int channel, const char *msg)
 {
-    int i;
+    tl_log[tl_log_current].src_id = src_id;
+    tl_log[tl_log_current].dst_id = dst_id;
+    tl_log[tl_log_current].channel = channel;
+    memset(tl_log[tl_log_current].msg, 0, MSG_LEN);
+    strncpy(tl_log[tl_log_current].msg, msg, MSG_LEN - 1);
 
+    tl_log_current++;
+    tl_log_current %= TL_LOG_MAX;
+}
 
-    for (i = 0; i < MAX_MAC_LIST; i++) {
-	if (src_mac[i] == mac) {
-	    return i + 1;
-	}
+/**
+ * Get log entry as formatted string
+ * Returns: 0 on success, -1 if entry is invalid/empty
+ */
+static int get_tl_log_string(int tl_log_id, char *buf)
+{
+    if (tl_log_id >= TL_LOG_MAX) {
+        snprintf(buf, MSG_LEN, "tl_log_id %d > TL_LOG_MAX %d", tl_log_id, TL_LOG_MAX);
+        return -1;
     }
 
-/*    if (i >= MAX_MAC_LIST) {
-	for (i = 0; i < MAX_MAC_LIST; i++) {
-	    if (src_mac[i] == 0) {
-		src_mac[i] = mac;
-		return i + 1;
-	    }
-	}
-    }*/
+    int src_id = tl_log[tl_log_id].src_id;
+    int dst_id = tl_log[tl_log_id].dst_id;
 
-    return -1;
-}
-
-uint64_t get_host_mac(int id)
-{
-    uint64_t mac=0;
-    unsigned int b0, b1, b2, b3, b4, b5;
-
-    if ( id > 0 && id <= MAX_MAC_LIST ) {
-	mac = src_mac[id - 1];
-    	// Extract bytes hi→lo
-/*    	b0 = (mac >> 40) & 0xFF;
-    	b1 = (mac >> 32) & 0xFF;
-    	b2 = (mac >> 24) & 0xFF;
-    	b3 = (mac >> 16) & 0xFF;
-    	b4 = (mac >> 8) & 0xFF;
-    	b5 = (mac >> 0) & 0xFF;
-
-	mac = ((uint64_t)b5 << 40) |
-	   	((uint64_t)b4 << 32) |
-	   	((uint64_t)b3 << 24) |
-	   	((uint64_t)b2 << 16) |
-	   	((uint64_t)b1 << 8) |
-	   	((uint64_t)b0 << 0);*/
+    // Validate source and destination IDs
+    if (src_id <= 0 || src_id > MAX_MAC_LIST ||
+        dst_id <= 0 || dst_id > MAX_MAC_LIST ||
+        get_host_mac(src_id) == 0 || get_host_mac(dst_id) == 0 ||
+        src_id == dst_id) {
+        snprintf(buf, MSG_LEN, "Empty src %d dst %d", src_id, dst_id);
+        return -1;
     }
-    return mac;
+
+    snprintf(buf, MSG_LEN, "%s", tl_log[tl_log_id].msg);
+    return 0;
 }
 
-void packet_callback(u_char * user, const struct pcap_pkthdr *pkthdr,
-		     const u_char * packet)
+// ============================================================================
+// Packet Processing
+// ============================================================================
+
+/**
+ * Process TileLink message and add to log
+ */
+static void process_tilelink_message(const struct tl_msg_header_chan_AD *tl_msg_header,
+                                     const struct ox_packet_struct *ox_p,
+                                     int src_host_id, int dst_host_id)
+{
+    char msg[MSG_LEN];
+    int channel = tl_msg_header->chan;
+    int opcode = tl_msg_header->opcode;
+    int data_size = 1 << tl_msg_header->size;
+    int include_data = 0;
+
+    switch (channel) {
+    case CHANNEL_A:
+	    if (opcode == A_PUTFULLDATA_OPCODE || opcode == A_PUTPARTIALDATA_OPCODE || 
+		opcode == A_ARITHMETICDATA_OPCODE || opcode == A_LOGICALDATA_OPCODE ) 
+		    include_data = 1;
+    case CHANNEL_B:
+	    if (opcode == B_PUTFULLDATA_OPCODE || opcode == B_PUTPARTIALDATA_OPCODE ||
+		opcode == B_ARITHMETICDATA_OPCODE || opcode == B_LOGICALDATA_OPCODE )
+		    include_data = 1;
+    case CHANNEL_C: 
+	    if ( opcode == C_ACCESSACKDATA_OPCODE || opcode == C_PROBEACKDATA_OPCODE ||
+		opcode == C_RELEASEDATA_OPCODE )
+		    include_data = 1;
+	    {
+        uint64_t addr = be64toh(ox_p->flits[1]);
+	if ( include_data == 1 ) {
+        	snprintf(msg, MSG_LEN, "%s 0x%lx %d 0x%lx",
+                	chan_opcode_str[channel][opcode], addr, data_size, ox_p->flits[2]);
+	} else {
+        	snprintf(msg, MSG_LEN, "%s 0x%lx %d",
+                	chan_opcode_str[channel][opcode], addr, data_size);
+	}
+        tl_log_add(src_host_id, dst_host_id, channel, msg);
+        break;
+    }
+    case CHANNEL_D:
+	if (opcode == D_ACCESSACKDATA_OPCODE || opcode == D_GRANTDATA_OPCODE)
+		include_data = 1;
+	if ( include_data == 1 ) {
+        	snprintf(msg, MSG_LEN, "%s %d 0x%lx",
+                	chan_opcode_str[channel][opcode], data_size, ox_p->flits[2]);
+	} else {
+        	snprintf(msg, MSG_LEN, "%s %d",
+                	chan_opcode_str[channel][opcode], data_size);
+	}
+        tl_log_add(src_host_id, dst_host_id, channel, msg);
+        break;
+    case CHANNEL_E:
+        snprintf(msg, MSG_LEN, "%s", chan_opcode_str[channel][opcode]);
+        tl_log_add(src_host_id, dst_host_id, channel, msg);
+        break;
+    default:
+        break;
+    }
+}
+
+/**
+ * Packet callback for libpcap
+ */
+static void packet_callback(u_char *user, const struct pcap_pkthdr *pkthdr,
+                           const u_char *packet)
 {
     char buf[2048];
-    int packet_len = pkthdr->len;
     struct ox_packet_struct ox_p;
     struct tl_msg_header_chan_AD tl_msg_header;
 
-    uint64_t be64_temp, mask, addr, page_num, cacheline_num;
-    int i, data_size;
-    int src_host_id = -1, dst_host_id = -1;
-    char msg[MSG_LEN];
+    memcpy(buf, packet, pkthdr->len);
 
-    memcpy(buf, packet, packet_len);
+    // Convert packet to Omnixtend structure
+    packet_to_ox_struct(buf, pkthdr->len, &ox_p);
+    if (ox_p.eth_hdr.eth_type != OX_ETHERTYPE)
+        return;
 
-    //convert TL message header as struct
-    packet_to_ox_struct(buf, packet_len, &ox_p);
-    if ( ox_p.eth_hdr.eth_type != OX_ETHERTYPE) return;
-
-    if (ox_p.tloe_hdr.msg_type == CLOSE_CONN ){
-	if ( get_host_id(ox_p.eth_hdr.src_mac_addr) != 2 ) { //if this is not MEM node
-	    remove_host_id(ox_p.eth_hdr.src_mac_addr);
-	}
-	return;
-    } 
-    if ( ox_p.tloe_hdr.msg_type == OPEN_CONN ){
-	    if ( get_host_id(ox_p.eth_hdr.src_mac_addr) == -1 ) { //if this is not registerd.
-		add_host_id(ox_p.eth_hdr.src_mac_addr);
-	    }
-	    return;
+    // Handle connection management
+    if (ox_p.tloe_hdr.msg_type == CLOSE_CONN) {
+        if (get_host_id(ox_p.eth_hdr.src_mac_addr) != MEM_NODE_ID) {
+            remove_host_id(ox_p.eth_hdr.src_mac_addr);
+        }
+        return;
     }
 
-//    printf("src_mac_addr=%012lx dst_mac_addr=%012lx\n", ox_p.eth_hdr.src_mac_addr, ox_p.eth_hdr.dst_mac_addr);
-    //get host id with source and destination mac addr
-    src_host_id = get_host_id(ox_p.eth_hdr.src_mac_addr);
-    if (src_host_id < 0) return;
-    dst_host_id = get_host_id(ox_p.eth_hdr.dst_mac_addr);
-    if (dst_host_id < 0) return;
+    if (ox_p.tloe_hdr.msg_type == OPEN_CONN) {
+        if (get_host_id(ox_p.eth_hdr.src_mac_addr) == -1) {
+            add_host_id(ox_p.eth_hdr.src_mac_addr);
+        }
+        return;
+    }
 
-    mask = ox_p.tl_msg_mask;
+    // Get host IDs
+    int src_host_id = get_host_id(ox_p.eth_hdr.src_mac_addr);
+    if (src_host_id < 0)
+        return;
+
+    int dst_host_id = get_host_id(ox_p.eth_hdr.dst_mac_addr);
+    if (dst_host_id < 0)
+        return;
+
+    // Process TileLink messages
+    uint64_t mask = ox_p.tl_msg_mask;
     if (mask) {
-	for (i = 0; i < (sizeof(uint64_t) * 8); i++) {
-	    if ((mask & 1) == 1) {
-		be64_temp = be64toh(ox_p.flits[i]);
-		memcpy(&(tl_msg_header), &be64_temp, sizeof(uint64_t));
-
-		//process messages based on channel type
-		switch ( tl_msg_header.chan ) {
-		case CHANNEL_A:
-		case CHANNEL_B:
-		case CHANNEL_C:
-		    addr = be64toh(ox_p.flits[i + 1]);
-		    data_size = 1 << tl_msg_header.size;
-		    snprintf(msg, MSG_LEN, "%s 0x%010lx %d", chan_opcode_str[tl_msg_header.chan][tl_msg_header.opcode], addr, data_size);
-		    tl_log_add(src_host_id, dst_host_id, tl_msg_header.chan, msg);
-		    break;
-
-		case CHANNEL_D:
-		    data_size = 1 << tl_msg_header.size;
-		    snprintf(msg, MSG_LEN, "%s %d", chan_opcode_str[tl_msg_header.chan][tl_msg_header.opcode], data_size);
-		    tl_log_add(src_host_id, dst_host_id, tl_msg_header.chan, msg);
-		    break;
-
-		case CHANNEL_E:
-		    snprintf(msg, MSG_LEN, "%s", chan_opcode_str[tl_msg_header.chan][tl_msg_header.opcode]);
-		    tl_log_add(src_host_id, dst_host_id, tl_msg_header.chan, msg);
-		    break;
-
-		default:
-//		    printf("UNKNOWN_CHANNEL(chan=%d) %d\n", tl_msg_header.chan, host_id);
-		    break;
-		}
-	    }
-	    mask = (mask >> 1);
-	    if (mask == 0)
-		break;
-	}
+        for (int i = 0; i < (sizeof(uint64_t) * 8); i++) {
+            if ((mask & 1) == 1) {
+                uint64_t be64_temp = be64toh(ox_p.flits[i]);
+                memcpy(&tl_msg_header, &be64_temp, sizeof(uint64_t));
+                process_tilelink_message(&tl_msg_header, &ox_p, src_host_id, dst_host_id);
+            }
+            mask = (mask >> 1);
+            if (mask == 0)
+                break;
+        }
     }
 }
 
-int counter = 0;
-int prev_entity_num = 0;
-void draw_border(int columns, int rows)
+// ============================================================================
+// Display Functions
+// ============================================================================
+
+/**
+ * Count number of active entities (hosts)
+ */
+static int count_active_entities(void)
 {
-    int i, j, k, ret, tl_log_id, msg_num, max_msg;
-    uint64_t be_mac;
+    int count = 0;
+    for (int i = 0; i < MAX_MAC_LIST; i++) {
+        if (src_mac[i] != 0)
+            count++;
+    }
+    return count;
+}
+
+/**
+ * Draw the border frame
+ */
+static void draw_frame_border(int columns, int rows)
+{
     int x = 0, y = 0;
     int w = columns - 1;
     int h = rows - 1;
-    char mac_string[20];
-    char entity_string[20];
-    int entity_num = 0;
-//    int entity_border_num;
-    int entity_border[MAX_MAC_LIST*2];
-    char msg[40];
 
-    //Show footer
-    mvprintw(y + h - 1, 2, "MECA Memory Cache Coherent Protocol Log\tChannel: ");
-    for (i=1; i<=5; i++) {
-	attron(COLOR_PAIR(i+1));
-	printw("%c", 'A'-1+i);
-	attroff(COLOR_PAIR(i+1));
-	printw("  ");
-    }
-    printw("\t\tPress 'q' to exit");
-
-    //find screen vertical diving unit
-    for(i=0; i<MAX_MAC_LIST; i++) {
-	    if (src_mac[i] != 0 ) entity_num++;
-    }
-    if ( entity_num != prev_entity_num ) {
-	    erase();
-    	    refresh();
-	    prev_entity_num = entity_num;
-    }
-//    entity_border_num = entity_num * 2;
-
-    //printw("entity_num=%d ", entity_num);
-    for (i=0; i<entity_num+1; i++) {
-    	entity_border[i] = i * (w/entity_num);
-//	printw("entity_border[%d]=%d ", i, entity_border[i]);
-    }
-
-    //Upper left corner
+    // Corners
     mvaddch(y, x, ACS_ULCORNER);
-    //Upper right corner
     mvaddch(y, x + w, ACS_URCORNER);
-    //Lower left corner
     mvaddch(y + h, x, ACS_LLCORNER);
-    //Lower right corner
     mvaddch(y + h, x + w, ACS_LRCORNER);
-    //Upper horizontal line
+
+    // Horizontal lines
     mvhline(y, x + 1, ACS_HLINE, w - 1);
-    //Lower horizontal line
     mvhline(y + h, x + 1, ACS_HLINE, w - 1);
-    //Left vertical line
+
+    // Vertical lines
     mvvline(y + 1, x, ACS_VLINE, h - 1);
-    //Right vertical line
     mvvline(y + 1, x + w, ACS_VLINE, h - 1);
 
-    //Head part
-    //Left T 
+    // Header separator
     mvaddch(y + 2, x, ACS_LTEE);
-    //Right T
     mvaddch(y + 2, x + w, ACS_RTEE);
-    //Horizontal line
     mvhline(y + 2, x + 1, ACS_HLINE, w - 1);
 
-    //Foot part
-    //Left T
+    // Footer separator
     mvaddch(y + h - 2, x, ACS_LTEE);
-    //Right T
     mvaddch(y + h - 2, x + w, ACS_RTEE);
-    //Horizontal line
     mvhline(y + h - 2, x + 1, ACS_HLINE, w - 1);
-
-    //border between hosts and MECA memory
-    for (i=1; i<entity_num; i++) {
-    	mvaddch(y + h - 2, entity_border[i], ACS_BTEE);
-    	mvaddch(y + 2, entity_border[i], ACS_PLUS);
-    	mvvline(y + 3, entity_border[i], ACS_VLINE, h - 5);
-    }
-
-    for (i=1; i<entity_num; i++) {
-    	mvaddch(y, entity_border[i], ACS_TTEE);
-    	mvvline(y + 1, entity_border[i], ACS_VLINE, 1);
-    }
-
-    j = 0;
-    k = 0; //host num
-    for (i=1; i<=MAX_MAC_LIST; i++) {
-	    if ( get_host_mac(i) != 0 ) {
-		    uint64_to_mac_string(get_host_mac(i), mac_string);
-		    if ( i == 2 ) { //MECA MEMORY
-			    sprintf(entity_string, "MECA MEM");
-			    attron(COLOR_PAIR(7));
-			    mvprintw(y + 1, (entity_border[j] + entity_border[j+1])/2 - strlen(entity_string)/2 - 8, "%s", entity_string);
-			    attroff(COLOR_PAIR(7));
-			    printw("(%s)", mac_string);
-		    } else { //Host
-			    sprintf(entity_string, "Host %d", k++);
-			    attron(COLOR_PAIR(8));
-			    mvprintw(y + 1, (entity_border[j] + entity_border[j+1])/2 - strlen(entity_string)/2 - 8, "%s", entity_string);
-			    attroff(COLOR_PAIR(8));
-			    printw("(%s)", mac_string);
-		    }
-		    j++;
-	    }
-    }
-
-    //draw TL msg log
-    max_msg = (h/2) - 3;
-    if ( max_msg < 0 ) max_msg = 0;
-    i = max_msg;
-    msg_num = 0;
-    while (max_msg > msg_num && i > 0) {
-	    tl_log_id = (tl_log_current-i)%TL_LOG_MAX;
-	    ret = get_tl_log_string(tl_log_id, msg);
-	    if (ret == 0 ) {
-		int entity_border_id = tl_log[tl_log_id].src_id;
-		//clear other part
-		for (j=0;j<entity_num; j++) {
-		       move(4+(msg_num)*2, entity_border[j] + 1);
-		       for (k=0; k<(w/entity_num-1); k++) addch(' ');
-		}
-
-		mvprintw(4+(msg_num)*2, 1, "%04d", tl_log_id);
-		if ( tl_log[tl_log_id].src_id > tl_log[tl_log_id].dst_id ) {
-			mvprintw(4+(msg_num)*2, entity_border[entity_border_id-1] - 1, "<-- ");
-			attron(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-			printw("%s", msg);
-			attroff(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-		} else {
-			attron(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-			mvprintw(4+(msg_num)*2, entity_border[entity_border_id] - 2 - strlen(msg), "%s", msg);
-			attroff(COLOR_PAIR(tl_log[tl_log_id].channel+1));
-			printw(" -->");
-
-		}
-
-		msg_num++;
-	    }
-	    i--;
-    }
-
 }
 
+/**
+ * Draw footer with channel legend
+ */
+static void draw_footer(int columns, int rows)
+{
+    int y = rows - 2;
+    mvprintw(y, 2, "MECA Memory Cache Coherent Protocol Log\tChannel: ");
 
-int prev_columns = 0, prev_rows = 0;
+    for (int i = 1; i <= NUM_TL_CHANNELS; i++) {
+        attron(COLOR_PAIR(COLOR_CHAN_A + i - 1));
+        printw("%c", 'A' + i - 1);
+        attroff(COLOR_PAIR(COLOR_CHAN_A + i - 1));
+        printw("  ");
+    }
+    printw("\t\tPress 'q' to exit");
+}
 
-void draw_screen(void)
+/**
+ * Draw entity (host) dividers and labels
+ */
+static void draw_entity_dividers(int columns, int rows, int entity_num, const int *entity_border)
+{
+    int x = 0, y = 0;
+    int h = rows - 1;
+
+    // Draw vertical dividers between entities
+    for (int i = 1; i < entity_num; i++) {
+        mvaddch(y + h - 2, entity_border[i], ACS_BTEE);
+        mvaddch(y + 2, entity_border[i], ACS_PLUS);
+        mvvline(y + 3, entity_border[i], ACS_VLINE, h - 5);
+        mvaddch(y, entity_border[i], ACS_TTEE);
+        mvvline(y + 1, entity_border[i], ACS_VLINE, 1);
+    }
+
+    // Draw entity labels
+    int entity_idx = 0;
+    int host_num = 0;
+    for (int i = 1; i <= MAX_MAC_LIST; i++) {
+        uint64_t mac = get_host_mac(i);
+        if (mac != 0) {
+            char mac_string[MAC_STRING_LEN];
+            char entity_string[ENTITY_STRING_LEN];
+            uint64_to_mac_string(mac, mac_string);
+
+            int center_x = (entity_border[entity_idx] + entity_border[entity_idx + 1]) / 2;
+
+            if (i == MEM_NODE_ID) {
+                snprintf(entity_string, ENTITY_STRING_LEN, "MECA MEM");
+                attron(COLOR_PAIR(COLOR_MEM));
+                mvprintw(y + 1, center_x - strlen(entity_string) / 2 - 8, "%s", entity_string);
+                attroff(COLOR_PAIR(COLOR_MEM));
+            } else {
+                snprintf(entity_string, ENTITY_STRING_LEN, "Host %d", host_num++);
+                attron(COLOR_PAIR(COLOR_HOST));
+                mvprintw(y + 1, center_x - strlen(entity_string) / 2 - 8, "%s", entity_string);
+                attroff(COLOR_PAIR(COLOR_HOST));
+            }
+            printw("(%s)", mac_string);
+            entity_idx++;
+        }
+    }
+}
+
+/**
+ * Draw TileLink message log entries
+ */
+static void draw_tl_log_entries(int columns, int rows, int entity_num, const int *entity_border)
+{
+    int h = rows - 1;
+    int w = columns - 1;
+    int max_msg = (h / 2) - 3;
+    if (max_msg < 0)
+        max_msg = 0;
+
+    int msg_num = 0;
+    for (int i = max_msg; i > 0 && msg_num < max_msg; i--) {
+        int tl_log_id = (tl_log_current - i) % TL_LOG_MAX;
+        char msg[MSG_LEN];
+
+        if (get_tl_log_string(tl_log_id, msg) == 0) {
+            int src_id = tl_log[tl_log_id].src_id;
+            int dst_id = tl_log[tl_log_id].dst_id;
+            int channel = tl_log[tl_log_id].channel;
+            int row = 4 + (msg_num * 2);
+
+            // Clear the row
+            for (int j = 0; j < entity_num; j++) {
+                move(row, entity_border[j] + 1);
+                for (int k = 0; k < (w / entity_num - 1); k++)
+                    addch(' ');
+            }
+
+            // Draw log ID
+            mvprintw(row, 1, "%04d", tl_log_id);
+
+            // Draw message with direction arrow
+            int entity_border_id = src_id;
+            if (src_id > dst_id) {
+                mvprintw(row, entity_border[entity_border_id - 1] - 1, "<-- ");
+                attron(COLOR_PAIR(channel + 1));
+                printw("%s", msg);
+                attroff(COLOR_PAIR(channel + 1));
+            } else {
+                attron(COLOR_PAIR(channel + 1));
+                mvprintw(row, entity_border[entity_border_id] - 2 - strlen(msg), "%s", msg);
+                attroff(COLOR_PAIR(channel + 1));
+                printw(" -->");
+            }
+
+            msg_num++;
+        }
+    }
+}
+
+/**
+ * Main draw function combining all display elements
+ */
+static void draw_border(int columns, int rows)
+{
+    int entity_num = count_active_entities();
+
+    // Clear screen if entity count changed
+    if (entity_num != prev_entity_num) {
+        erase();
+        refresh();
+        prev_entity_num = entity_num;
+    }
+
+    if (entity_num == 0)
+        return;
+
+    // Calculate entity borders
+    int entity_border[MAX_MAC_LIST + 1];
+    int w = columns - 1;
+    for (int i = 0; i <= entity_num; i++) {
+        entity_border[i] = i * (w / entity_num);
+    }
+
+    draw_frame_border(columns, rows);
+    draw_footer(columns, rows);
+    draw_entity_dividers(columns, rows, entity_num, entity_border);
+    draw_tl_log_entries(columns, rows, entity_num, entity_border);
+}
+
+/**
+ * Main screen drawing function
+ */
+static void draw_screen(void)
 {
     struct winsize ts;
-    int columns = 0, rows = 0;
-    int block_count = 0;
-    int block_unit_shift = 0;
-    size_t i;
-    char block_size_string[16];
-    int row_start = 11;
-    uint64_t touched_page_num = 0;
 
-    //get screen resolution
+    // Get terminal dimensions
     ioctl(0, TIOCGWINSZ, &ts);
-    columns = ts.ws_col;
-    rows = ts.ws_row;
-    
-    if ( prev_columns != columns || prev_rows != rows ) {
-	    erase();
-    	    refresh();
-	    prev_columns = columns;
-	    prev_rows = rows;
+    int columns = ts.ws_col;
+    int rows = ts.ws_row;
+
+    // Clear screen if dimensions changed
+    if (prev_columns != columns || prev_rows != rows) {
+        erase();
+        refresh();
+        prev_columns = columns;
+        prev_rows = rows;
     }
 
     draw_border(columns, rows);
-
-    //show screen
     refresh();
 }
 
-void *status_update_thread(void *data)
+// ============================================================================
+// Thread and Signal Handlers
+// ============================================================================
+
+/**
+ * Status update thread - refreshes display and handles input
+ */
+static void *status_update_thread(void *data)
 {
-	int interval_usec, bytes;
-	char ch;
-	int flags;
-	struct termios t;
+    int interval_usec = *((int *)data);
+    char ch;
+    int flags;
+    struct termios t;
 
-	interval_usec = *((int *) data);
+    // Set up non-blocking input
+    flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    tcgetattr(STDIN_FILENO, &t);
+    t.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
 
-	flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-	fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-	tcgetattr(STDIN_FILENO, &t);
-	t.c_lflag &= ~(ICANON | ECHO);
-	tcsetattr(STDIN_FILENO, TCSANOW, &t);
+    while (1) {
+        draw_screen();
+        usleep(interval_usec);
 
+        // Check for quit command
+        ssize_t bytes = read(STDIN_FILENO, &ch, 1);
+        if (bytes > 0 && ch == 'q') {
+            endwin();
+            exit(0);
+        }
+    }
 
-	while(1) {
-
-		draw_screen();
-		
-		usleep(interval_usec);
-		//read key input
-	bytes = read(STDIN_FILENO, &ch, 1);
-	if (bytes > 0) {
-		if (ch == 'q') { //terminate program
-		    endwin();
-		    exit(0);
-		}
-	}
-
-	}
-
+    return NULL;
 }
 
-
-void handleCtrlC(int signum)
+/**
+ * Signal handler for Ctrl+C
+ */
+static void handle_sigint(int signum)
 {
+    (void)signum;  // Unused parameter
     endwin();
     exit(0);
 }
+
+// ============================================================================
+// Main Function
+// ============================================================================
 
 int main(int argc, char **argv)
 {
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle;
     pthread_t pid;
-    int interval_usec = 100000;	//0.1 sec
+    int interval_usec = UPDATE_INTERVAL_USEC;
     uint64_t mem_mac = 0;
-    int host_id;
-    char mac_string[18];
-    int i;
     char *dev;
 
+    // Parse command line arguments
     if (argc < 4) {
-	printf("Usage: %s [interface] [--mem_mac xx:xx:xx:xx:xx:xx]\n", argv[0]);
-	return 0;
+        printf("Usage: %s [interface] --mem_mac xx:xx:xx:xx:xx:xx\n", argv[0]);
+        return 0;
     }
 
-    // Parse arguments
     dev = argv[1];
 
-    // Parse optional arguments
-    for (i = 2; i < argc; i++) {
-	if (strcmp(argv[i], "--mem_mac") == 0) {
-	    if (i + 1 < argc) {
-		if (mac_string_to_uint64(argv[i + 1], &mem_mac) < 0) {
-		    fprintf(stderr, "Failed to parse memory MAC address\n");
-		    return 1;
-		}
-		i++;  // Skip the MAC address argument
-	    } else {
-		fprintf(stderr, "--mem_mac requires a MAC address argument\n");
-		return 1;
-	    }
-	}
+    // Parse --mem_mac argument
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--mem_mac") == 0) {
+            if (i + 1 < argc) {
+                if (mac_string_to_uint64(argv[i + 1], &mem_mac) < 0) {
+                    fprintf(stderr, "Failed to parse memory MAC address\n");
+                    return 1;
+                }
+                i++;
+            } else {
+                fprintf(stderr, "--mem_mac requires a MAC address argument\n");
+                return 1;
+            }
+        }
     }
 
-    signal(SIGINT, handleCtrlC);
+    // Register signal handler
+    signal(SIGINT, handle_sigint);
 
     // Register memory MAC address
     if (mem_mac != 0) {
-	src_mac[1] = mem_mac;
-	host_id = get_host_id(mem_mac);
-	uint64_to_mac_string(mem_mac, mac_string);
-	printf("Memory MAC: %s, Host ID: %d\n", mac_string, host_id);
+        src_mac[1] = mem_mac;
+        int host_id = get_host_id(mem_mac);
+        char mac_string[MAC_STRING_LEN];
+        uint64_to_mac_string(mem_mac, mac_string);
+        printf("Memory MAC: %s, Host ID: %d\n", mac_string, host_id);
     }
 
-    memset(tl_log,0, sizeof(struct tl_log_entry)*TL_LOG_MAX);
+    // Initialize log buffer
+    memset(tl_log, 0, sizeof(struct tl_log_entry) * TL_LOG_MAX);
 
-    //init screen and color pairs
+    // Initialize ncurses
     setlocale(LC_ALL, "C-UTF-8");
     initscr();
     start_color();
 
-    init_pair(1, COLOR_WHITE, COLOR_BLACK);             //Initial state
-    init_pair(2, COLOR_WHITE, COLOR_RED);
-    init_pair(3, COLOR_WHITE, COLOR_BLUE);
-    init_pair(4, COLOR_BLACK, COLOR_WHITE);
-    init_pair(5, COLOR_BLACK, COLOR_GREEN);
-    init_pair(6, COLOR_BLACK, COLOR_MAGENTA);
-    init_pair(7, COLOR_RED, COLOR_BLACK);	//MECA Mem
-    init_pair(8, COLOR_GREEN, COLOR_BLACK);	//Host
+    // Initialize color pairs
+    init_pair(COLOR_INITIAL, COLOR_WHITE, COLOR_BLACK);
+    init_pair(COLOR_CHAN_A, COLOR_WHITE, COLOR_RED);
+    init_pair(COLOR_CHAN_B, COLOR_WHITE, COLOR_BLUE);
+    init_pair(COLOR_CHAN_C, COLOR_BLACK, COLOR_WHITE);
+    init_pair(COLOR_CHAN_D, COLOR_BLACK, COLOR_GREEN);
+    init_pair(COLOR_CHAN_E, COLOR_BLACK, COLOR_MAGENTA);
+    init_pair(COLOR_MEM, COLOR_RED, COLOR_BLACK);
+    init_pair(COLOR_HOST, COLOR_GREEN, COLOR_BLACK);
 
-    if (pthread_create(&pid, NULL, status_update_thread, (void *) &interval_usec)) {
-	    perror("Thread create error.");
-	    exit(0);
+    // Start display update thread
+    if (pthread_create(&pid, NULL, status_update_thread, (void *)&interval_usec)) {
+        perror("Thread create error");
+        endwin();
+        return 1;
     }
 
+    // Open packet capture
     handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
-	fprintf(stderr, "Error opening device %s: %s\n", dev, errbuf);
-	return 1;
+        fprintf(stderr, "Error opening device %s: %s\n", dev, errbuf);
+        endwin();
+        return 1;
     }
 
     // Start capturing packets
     pcap_loop(handle, 0, packet_callback, NULL);
 
+    // Cleanup
     pcap_close(handle);
-
     endwin();
     return 0;
 }
