@@ -566,19 +566,44 @@ static void draw_tl_log_entries(int columns, int rows, int entity_num,
 	    // Draw log ID
 	    mvprintw(row, 1, "%04d", tl_log_id);
 
-	    // Draw message with direction arrow
+	    // Calculate available width for message
 	    int entity_border_id = src_id;
+	    int entity_width;
+	    if (src_id > dst_id) {
+		entity_width = entity_border[entity_border_id] -
+			       entity_border[entity_border_id - 1] - 6; // "<-- " + margin
+	    } else {
+		entity_width = entity_border[entity_border_id] -
+			       entity_border[entity_border_id - 1] - 6; // " -->" + margin
+	    }
+
+	    // Truncate message if too long
+	    char display_msg[MSG_LEN];
+	    int msg_len = strlen(msg);
+	    if (msg_len > entity_width && entity_width > 3) {
+		strncpy(display_msg, msg, entity_width - 3);
+		display_msg[entity_width - 3] = '\0';
+		strcat(display_msg, "...");
+	    } else if (entity_width <= 3) {
+		display_msg[0] = '\0';  // Too narrow to display anything
+	    } else {
+		strncpy(display_msg, msg, MSG_LEN - 1);
+		display_msg[MSG_LEN - 1] = '\0';
+	    }
+
+	    // Draw message with direction arrow
 	    if (src_id > dst_id) {
 		mvprintw(row, entity_border[entity_border_id - 1] - 1,
 			 "<-- ");
 		attron(COLOR_PAIR(channel + 1));
-		printw("%s", msg);
+		printw("%s", display_msg);
 		attroff(COLOR_PAIR(channel + 1));
 	    } else {
+		int display_msg_len = strlen(display_msg);
 		attron(COLOR_PAIR(channel + 1));
 		mvprintw(row,
-			 entity_border[entity_border_id] - 2 - strlen(msg),
-			 "%s", msg);
+			 entity_border[entity_border_id] - 2 - display_msg_len,
+			 "%s", display_msg);
 		attroff(COLOR_PAIR(channel + 1));
 		printw(" -->");
 	    }
