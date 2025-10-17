@@ -19,7 +19,7 @@
 #include "ox_common.h"
 
 // Constants
-#define MAX_MAC_LIST 4
+#define MAX_MAC_LIST 3
 #define TL_LOG_MAX 1024
 #define MSG_LEN 256
 #define MAC_STRING_LEN 20
@@ -40,6 +40,7 @@
 
 // TileLink channel opcode strings
 // Index by [channel][opcode], where channel 0 is unused
+#if 0
 static const char *chan_opcode_str[][8] = {
     {"", "", "", "", "", "", "", ""},	// Channel 0 - none is valid
     // Channel A
@@ -57,6 +58,25 @@ static const char *chan_opcode_str[][8] = {
     // Channel E
     {"GRANTACK", "", "", "", "", "", "", ""}
 };
+#endif
+static const char *chan_opcode_str[][8] = {
+    {"", "", "", "", "", "", "", ""},	// Channel 0 - none is valid
+    // Channel A
+    {"PutFullData", "PutPartialData", "ArithmeticData", "LogicalData",
+     "Get", "Intent", "AcquireBlock", "AcquirePerm"},
+    // Channel B
+    {"PutFullData", "PutPartialData", "ArithmeticData", "LogicalData",
+     "Get", "Intent", "ProbeBlock", "ProbePerm"},
+    // Channel C
+    {"AccessAck", "AccessAckData", "HintAck", "NOOP",
+     "ProbeAck", "ProbeAckData", "Release", "ReleaseData"},
+    // Channel D
+    {"AccessAck", "AccessAckData", "HintAck", "NOOP",
+     "Grant", "GrantData", "ReleaseAck", "NOOP"},
+    // Channel E
+    {"GrantAck", "", "", "", "", "", "", ""}
+};
+
 
 // Data structures
 struct tl_log_entry {
@@ -301,11 +321,11 @@ static void process_tilelink_message(const struct tl_msg_header_chan_AD
 	{
 	    uint64_t addr = be64toh(ox_p->flits[flit_pos+1]);
 	    if (include_data == 1) {
-		snprintf(msg, MSG_LEN, "%s 0x%lx %d 0x%lx",
+		snprintf(msg, MSG_LEN, "%s A:0x%lx S:%d D:0x%lx",
 			 chan_opcode_str[channel][opcode], addr, data_size,
 			 ox_p->flits[flit_pos+2]);
 	    } else {
-		snprintf(msg, MSG_LEN, "%s 0x%lx %d",
+		snprintf(msg, MSG_LEN, "%s A:0x%lx S:%d",
 			 chan_opcode_str[channel][opcode], addr,
 			 data_size);
 	    }
@@ -317,11 +337,11 @@ static void process_tilelink_message(const struct tl_msg_header_chan_AD
 	    || opcode == D_GRANTDATA_OPCODE)
 	    include_data = 1;
 	if (include_data == 1) {
-	    snprintf(msg, MSG_LEN, "%s %d 0x%lx",
+	    snprintf(msg, MSG_LEN, "%s S:%d D:0x%lx",
 		     chan_opcode_str[channel][opcode], data_size,
 		     ox_p->flits[flit_pos+1]);
 	} else {
-	    snprintf(msg, MSG_LEN, "%s %d",
+	    snprintf(msg, MSG_LEN, "%s S:%d",
 		     chan_opcode_str[channel][opcode], data_size);
 	}
 	tl_log_add(src_host_id, dst_host_id, channel, msg);
