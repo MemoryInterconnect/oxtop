@@ -260,8 +260,6 @@ static void tl_log_add(int src_id, int dst_id, int channel,
  */
 static int get_tl_log_string(int tl_log_id, char *buf)
 {
-    if (tl_log_id < 0) { printf ("aaaaaaaa\n"); }
-
     if (tl_log_id >= TL_LOG_MAX) {
 	snprintf(buf, MSG_LEN, "tl_log_id %d > TL_LOG_MAX %d", tl_log_id,
 		 TL_LOG_MAX);
