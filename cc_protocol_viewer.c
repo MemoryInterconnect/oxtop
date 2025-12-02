@@ -240,6 +240,8 @@ static void tl_log_add(int src_id, int dst_id, int channel,
  */
 static int get_tl_log_string(int tl_log_id, char *buf)
 {
+    if (tl_log_id < 0) { printf ("aaaaaaaa\n"); }
+
     if (tl_log_id >= TL_LOG_MAX) {
 	snprintf(buf, MSG_LEN, "tl_log_id %d > TL_LOG_MAX %d", tl_log_id,
 		 TL_LOG_MAX);
@@ -529,6 +531,8 @@ static void draw_tl_log_entries(int columns, int rows, int entity_num,
     for (int i = max_msg; i > 0 && msg_num < max_msg; i--) {
 	int tl_log_id = (tl_log_current - i) % TL_LOG_MAX;
 	char msg[MSG_LEN];
+
+	if ( tl_log_id < 0 ) continue;
 
 	if (get_tl_log_string(tl_log_id, msg) == 0) {
 	    int src_id = tl_log[tl_log_id].src_id;
