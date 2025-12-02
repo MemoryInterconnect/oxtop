@@ -550,6 +550,7 @@ static void draw_tl_log_entries(int columns, int rows, int entity_num,
 	int tl_log_id = (tl_log_current - i) % TL_LOG_MAX;
 	char msg[MSG_LEN];
 
+    if (tl_log_id < 0 ) continue;
 	if (get_tl_log_string(tl_log_id, msg) == 0) {
 	    int src_id = tl_log[tl_log_id].src_id;
 	    int dst_id = tl_log[tl_log_id].dst_id;
