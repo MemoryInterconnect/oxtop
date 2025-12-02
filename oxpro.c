@@ -19,7 +19,7 @@
 #include "ox_common.h"
 
 // Constants
-#define MAX_MAC_LIST 4
+#define MAX_MAC_LIST 3
 #define TL_LOG_MAX 1024
 #define MSG_LEN 256
 #define MAC_STRING_LEN 20
@@ -40,6 +40,7 @@
 
 // TileLink channel opcode strings
 // Index by [channel][opcode], where channel 0 is unused
+#if 0
 static const char *chan_opcode_str[][8] = {
     {"", "", "", "", "", "", "", ""},	// Channel 0 - none is valid
     // Channel A
@@ -57,6 +58,25 @@ static const char *chan_opcode_str[][8] = {
     // Channel E
     {"GRANTACK", "", "", "", "", "", "", ""}
 };
+#endif
+static const char *chan_opcode_str[][8] = {
+    {"", "", "", "", "", "", "", ""},	// Channel 0 - none is valid
+    // Channel A
+    {"PutFullData", "PutPartialData", "ArithmeticData", "LogicalData",
+     "Get", "Intent", "AcquireBlock", "AcquirePerm"},
+    // Channel B
+    {"PutFullData", "PutPartialData", "ArithmeticData", "LogicalData",
+     "Get", "Intent", "ProbeBlock", "ProbePerm"},
+    // Channel C
+    {"AccessAck", "AccessAckData", "HintAck", "NOOP",
+     "ProbeAck", "ProbeAckData", "Release", "ReleaseData"},
+    // Channel D
+    {"AccessAck", "AccessAckData", "HintAck", "NOOP",
+     "Grant", "GrantData", "ReleaseAck", "NOOP"},
+    // Channel E
+    {"GrantAck", "", "", "", "", "", "", ""}
+};
+
 
 // Data structures
 struct tl_log_entry {
@@ -303,11 +323,11 @@ static void process_tilelink_message(const struct tl_msg_header_chan_AD
 	{
 	    uint64_t addr = be64toh(ox_p->flits[flit_pos+1]);
 	    if (include_data == 1) {
-		snprintf(msg, MSG_LEN, "%s 0x%lx %d 0x%lx",
+		snprintf(msg, MSG_LEN, "%s A:0x%lx S:%d D:0x%lx",
 			 chan_opcode_str[channel][opcode], addr, data_size,
 			 ox_p->flits[flit_pos+2]);
 	    } else {
-		snprintf(msg, MSG_LEN, "%s 0x%lx %d",
+		snprintf(msg, MSG_LEN, "%s A:0x%lx S:%d",
 			 chan_opcode_str[channel][opcode], addr,
 			 data_size);
 	    }
@@ -319,11 +339,11 @@ static void process_tilelink_message(const struct tl_msg_header_chan_AD
 	    || opcode == D_GRANTDATA_OPCODE)
 	    include_data = 1;
 	if (include_data == 1) {
-	    snprintf(msg, MSG_LEN, "%s %d 0x%lx",
+	    snprintf(msg, MSG_LEN, "%s S:%d D:0x%lx",
 		     chan_opcode_str[channel][opcode], data_size,
 		     ox_p->flits[flit_pos+1]);
 	} else {
-	    snprintf(msg, MSG_LEN, "%s %d",
+	    snprintf(msg, MSG_LEN, "%s S:%d",
 		     chan_opcode_str[channel][opcode], data_size);
 	}
 	tl_log_add(src_host_id, dst_host_id, channel, msg);
@@ -452,7 +472,7 @@ static void draw_frame_border(int columns, int rows)
 static void draw_footer(int columns, int rows)
 {
     int y = rows - 2;
-    mvprintw(y, 2, "MECA Memory Cache Coherent Protocol Log\tChannel: ");
+    mvprintw(y, 2, "MECA Memory Protocol Viewer\tChannel: ");
 
     for (int i = 1; i <= NUM_TL_CHANNELS; i++) {
 	attron(COLOR_PAIR(COLOR_CHAN_A + i - 1));
@@ -550,19 +570,44 @@ static void draw_tl_log_entries(int columns, int rows, int entity_num,
 	    // Draw log ID
 	    mvprintw(row, 1, "%04d", tl_log_id);
 
-	    // Draw message with direction arrow
+	    // Calculate available width for message
 	    int entity_border_id = src_id;
+	    int entity_width;
+	    if (src_id > dst_id) {
+		entity_width = entity_border[entity_border_id] -
+			       entity_border[entity_border_id - 1] - 6; // "<-- " + margin
+	    } else {
+		entity_width = entity_border[entity_border_id] -
+			       entity_border[entity_border_id - 1] - 6; // " -->" + margin
+	    }
+
+	    // Truncate message if too long
+	    char display_msg[MSG_LEN];
+	    int msg_len = strlen(msg);
+	    if (msg_len > entity_width && entity_width > 3) {
+		strncpy(display_msg, msg, entity_width - 3);
+		display_msg[entity_width - 3] = '\0';
+		strcat(display_msg, "...");
+	    } else if (entity_width <= 3) {
+		display_msg[0] = '\0';  // Too narrow to display anything
+	    } else {
+		strncpy(display_msg, msg, MSG_LEN - 1);
+		display_msg[MSG_LEN - 1] = '\0';
+	    }
+
+	    // Draw message with direction arrow
 	    if (src_id > dst_id) {
 		mvprintw(row, entity_border[entity_border_id - 1] - 1,
 			 "<-- ");
 		attron(COLOR_PAIR(channel + 1));
-		printw("%s", msg);
+		printw("%s", display_msg);
 		attroff(COLOR_PAIR(channel + 1));
 	    } else {
+		int display_msg_len = strlen(display_msg);
 		attron(COLOR_PAIR(channel + 1));
 		mvprintw(row,
-			 entity_border[entity_border_id] - 2 - strlen(msg),
-			 "%s", msg);
+			 entity_border[entity_border_id] - 2 - display_msg_len,
+			 "%s", display_msg);
 		attroff(COLOR_PAIR(channel + 1));
 		printw(" -->");
 	    }
